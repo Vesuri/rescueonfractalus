@@ -27,6 +27,10 @@ SLAVE=RoF.slave
   exit 1
 }
 
+# The public package must use the external-data build.  Check its ELF sections and descriptor
+# rather than guessing from printable strings (the Atari text is encoded).
+python3 ../tools/audit_release_data.py ../amiga/out/RoF.elf "$EXE" --repo ..
+
 rm -rf "$DIST"
 mkdir -p "$DIST/$PKG"
 

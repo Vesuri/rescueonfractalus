@@ -39,9 +39,11 @@
 #include "framework/AmigaHardware.h"
 #include "framework/CopperList.h"   // wraps GfxBase->copinit for the exit-time COP1LC restore
 #include "PlatformAmiga.h"
+#include "../../rof_data.h"
 #include "RescueOnFractalus.h"
 #include "ExternalHooks.h"       // the launcher-patchable hiscore save/load hooks
 #include "../../rof_hiscore.h"   // rof_hiscore_flush — the deferred save, after the OS is back
+extern "C" void KPrintF(const char*, ...);
 extern "C" volatile uint16_t g_atariDlist;   // DLISTL/DLISTH latch (bus.h) — which screen is up
 
 // mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
@@ -3771,10 +3773,12 @@ PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
     // Bring up the platform (mirrors PlatformSDL's ctor doing SDL_Init): open
     // graphics.library so run()'s display takeover can reach GfxBase.  On failure set
     // quit so main() bails (it checks plt.quit) instead of dereferencing a null GfxBase.
-    // The Amiga image is embedded (incbin) and loaded in run() via load_xex_image(), so
-    // the path argument is ignored.
+    // The package is supplied through the retained data descriptor and loaded into mem[] by
+    // load_xex_image(), so the path argument is ignored.
     GfxBase = (struct GfxBase*)OpenLibrary((UBYTE*)"graphics.library", 33);
-    quit = (GfxBase == 0);
+    const int dataReady = rof_data_available();
+    quit = (GfxBase == 0) || !dataReady;
+    if (!dataReady) KPrintF("RoF: cartridge data unavailable (check %ld)\n", (long)rof_data_error);
 
     // dos.library, for the high-score file only — opened HERE so the read happens while the OS
     // still owns the machine, and so the open itself (which can Wait()) is outside run()'s

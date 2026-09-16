@@ -2,7 +2,11 @@
 #include "cpu/cpu.h"          /* mem[] + the integer types */
 #include "platform/platform_c.h"
 #include "rof_hiscore.h"
-#include "rof_hiscore_factory.h"   /* kHiScoreFactory[200] — the ORIGINAL table */
+#ifdef ROF_PLATFORM_AMIGA
+#include "rof_data.h"              /* factory table comes from user-supplied rof.rom */
+#else
+#include <stdio.h>
+#endif
 
 /* Atari DCB (device control block) fields the 6502 fills in before the SIO call. */
 #define DCB_DUNIT   0x0301
@@ -35,6 +39,30 @@
 static unsigned char g_block[ROF_HISCORE_BLOCK_SIZE];
 static int           g_dirty;
 
+#ifndef ROF_PLATFORM_AMIGA
+/* Developer/SDL builds follow the same ownership rule as the Amiga executable.  The local
+ * cartridge is ignored by git; a missing ROM leaves the factory table empty, after which the
+ * original validation path selects its normal new-game defaults. */
+static int read_factory_from_rom(unsigned char *dst)
+{
+    static const char *const paths[] = { "rof.rom", "../rof.rom" };
+    unsigned i;
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        FILE *f = fopen(paths[i], "rb");
+        long size;
+        if (!f) continue;
+        if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) != 65536L ||
+            fseek(f, 0x6200L, SEEK_SET) != 0 || fread(dst, 1, 200, f) != 200) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+        return 1;
+    }
+    return 0;
+}
+#endif
+
 /* Outcome counters, read by amiga/name_entry.gdb.  This path is invisible from the outside —
  * a screen that never appears looks identical whether the loader failed, the gate rejected the
  * block or the game simply did not reach it — so each step gets its own tally.  Six words. */
@@ -50,11 +78,18 @@ extern volatile unsigned short g_hsSioRead, g_hsSioWrite, g_hsSioErr, g_hsDirty;
 void rof_hiscore_init(void)
 {
     int i;
+#ifdef ROF_PLATFORM_AMIGA
+    const unsigned char *factory = rof_data_at_rom_offset(0x6200ul, 200ul);
+#endif
 
     for (i = 0; i < ROF_HISCORE_BLOCK_SIZE; i++)
         g_block[i] = 0;
-    for (i = 0; i < (int)sizeof(kHiScoreFactory); i++)
-        g_block[i] = kHiScoreFactory[i];
+#ifdef ROF_PLATFORM_AMIGA
+    if (factory)
+        for (i = 0; i < 200; i++) g_block[i] = factory[i];
+#else
+    (void)read_factory_from_rom(g_block);
+#endif
     for (i = 0; i < SIGNATURE_LEN; i++)
         g_block[SIGNATURE_OFF + i] = mem[SIGNATURE_SRC + 1 + i];
     g_block[LEVEL_PROGRESS_OFF] = 0x10;

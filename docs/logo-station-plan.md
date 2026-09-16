@@ -137,8 +137,8 @@ levels of one hue taken from `COLBK`. So on the Amiga both are **4 bitplanes, 32
      (wait 2 frames) between each, while progressively zeroing/masking the P0 shape rows.
      16 steps × 2 frames = 32 frames. Then `HPOSP0 = 0`, **RTS** → the loader resumes.
 * **`$5111`/`$5117` — the stroke plotter.** ⭐ Fully decoded 2026-08-13, and **verified**: a
-  Python re-implementation of it reproduces `src/rof_logo_field.h` byte for byte (0 mismatches in
-  2480 + 143). Kept as `tools/plot_logo_ref.py`, which is now the bake's reproducible oracle.
+  A Python re-implementation reproduced the former baked fields byte for byte (0 mismatches in
+  2480 + 143). The shipping C now replays the same plotter from cartridge-loaded stroke data.
 
   **There is no bitmap in the file.** The picture is generated from **130 bytes** at
   `$525F-$52E0` plus a 7-entry pattern table — ~18× compression, which is why they plotted it.
@@ -214,7 +214,7 @@ one shared decoder (§1.3 table) handles both scenes and the asset stays inspect
 
 | Piece | Where |
 |---|---|
-| The baked bitmap, **both phases** | `src/rof_logo_field.h` (generated), `tools/gen_logo_field.py` |
+| The bitmap, **both phases** | drawn at runtime by `src/rof_logo.c` from the `$525F` stroke stream |
 | The copper list (4bp, 16 gold luminances, 64 blank lines + 62 rows) | `Gtia9CopperList`, already parameterised — `buildLayout(field, kLogoTopLines=64, kLogoRows=62, kGtia9Pal1, nullSprite)` |
 | The GTIA-9 → 4-plane decoder + the shared 320×340 field bitmap | `RescueOnFractalus.cpp` `gtia9Row()` / `bootFieldBitmap` |
 | Scene routing | `rof_boot_chain()` sets `g_bootScene = ROF_BOOTSCENE_LOGO` around `rof_logo_run()`; `renderBootScene()` already has the logo branch and builds the logo layout |
@@ -223,9 +223,8 @@ one shared decoder (§1.3 table) handles both scenes and the asset stays inspect
 **TWO PHASES — the reveal is not the end of the drawing.** `$5000` draws "LUCASFILM", reveals it
 (DMACTL `$3A`), blocks 86 frames on ZP `$90`, and only THEN draws "GAMES".  Both states are
 captured from real savestates and differ in exactly one **11 × 13-byte rectangle** (rows 50-60,
-bytes 13-25), so `rof_logo_field.h` carries the LUCASFILM field whole plus that overlay
-(`ROF_LOGO_GAMES_ROW/COL/ROWS/COLS`).  Paste the overlay into mem[] at the GAMES cue and mark the
-field dirty so `renderBootScene` re-decodes those rows.
+bytes 13-25). The runtime plotter adds those two GAMES passes at the cue and marks the field dirty
+so `renderBootScene` re-decodes it.
 
 **`$51EF` — the VBI, disassembled from segment 5 (verified against `lucasfilm.a8s`: at RTCLOK
 `$14` its four AUDF accumulators are exactly their `$5254` seeds plus 12 steps of 1/2/3/0):**
@@ -318,7 +317,7 @@ that exclusion list. Nothing else in the scene noticed, because the two long hol
 | Checked | Result |
 |---|---|
 | Display list unpacked from `$52E7` | `70×8 / 4F A3 60 / 0F×61 / 41 00 60` ✓ |
-| Field pasted, both phases | row 0 = `00 00 ff ff f0 2f ff f0 …` and the GAMES rect rows 50/55/60 all byte-exact vs `rof_logo_field.h` ✓ |
+| Field drawn, both phases | runtime stroke plotter was byte-exact against the former 2480-byte field and 143-byte GAMES overlay ✓ |
 | GTIA-9 decode + row stride | source nibble → pen across 4 planes, checked at rows 0, 60 and the last row 61 ✓ |
 | Copper geometry | WIN_WAIT line 107, BOT_WAIT line 169 (64 blank + 62 rows) ✓ |
 | The `$51EF` sweep's arithmetic | at 39 frames in, `$93/$95/$97/$99` = seed + 39×(1/2/3/0) exactly ✓ |

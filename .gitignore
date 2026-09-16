@@ -19,6 +19,7 @@
 *.xex
 *.png
 *.rom
+/amiga/generated/
 
 # --- Build output ------------------------------------------------------------
 build/

@@ -455,6 +455,84 @@ extern "C" volatile unsigned char g_flightBlank;
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.
 static uint16_t kDoubleGlyph[256];
 
+/* Build the former cockpit_planar.bin into BSS from the cartridge-sourced v4.1 glyphs.
+ * The layout is unchanged, so every rendering call below keeps its existing direct-copy path. */
+static void buildCockpitPlanarAsset()
+{
+    uint8_t* out = rof_cockpit_planar;
+    int src, ch, scan, pixel, plane;
+    for (int i = 0; i < kCockpitPlanarAssetSize; i++) out[i] = 0;
+    out[0] = 'C'; out[1] = 'P'; out[2] = 'L'; out[3] = 'N';
+    const uint16_t headerWords[] = {
+        1, kCockpitPlanarModeDOffset, kCockpitPlanarModeDOffset,
+        kCockpitPlanarMode4Offset, kCockpitPlanarCompassOffset,
+        kCockpitPlanarTextMaskOffset, kCockpitPlanarNormalMode4Offset,
+        kCockpitPlanarAssetSize
+    };
+    for (unsigned i = 0; i < sizeof(headerWords) / sizeof(headerWords[0]); i++) {
+        out[4 + i * 2] = (uint8_t)(headerWords[i] >> 8);
+        out[5 + i * 2] = (uint8_t)headerWords[i];
+    }
+
+    for (src = 0; src < 256; src++) {
+        uint8_t p1 = 0, p2 = 0;
+        for (pixel = 0; pixel < 4; pixel++) {
+            int value = (src >> (6 - pixel * 2)) & 3;
+            uint8_t mask = (uint8_t)(0xC0u >> (pixel * 2));
+            if (value & 1) p1 |= mask;
+            if (value & 2) p2 |= mask;
+        }
+        out[kCockpitPlanarModeDOffset + src * 2] = p1;
+        out[kCockpitPlanarModeDOffset + src * 2 + 1] = p2;
+    }
+
+    for (ch = 0; ch < 256; ch++) {
+        for (scan = 0; scan < 8; scan++) {
+            uint8_t bits = mem[0x3800 + (ch & 0x7F) * 8 + scan];
+            uint8_t p[4] = {0, 0, 0, 0};
+            for (pixel = 0; pixel < 4; pixel++) {
+                int value = (bits >> (6 - pixel * 2)) & 3;
+                uint8_t mask = (uint8_t)(0xC0u >> (pixel * 2));
+                int pen = value == 0 ? 1 : value == 1 ? 0 : value == 2 ? 2 : ((ch & 0x80) ? 3 : 4);
+                for (plane = 0; plane < 4; plane++) if (pen & (1 << plane)) p[plane] |= mask;
+                if (value == 0) out[kCockpitPlanarMode4Offset + ch * 24 + scan * 3] |= mask;
+                else if (value == 2) out[kCockpitPlanarMode4Offset + ch * 24 + scan * 3 + 1] |= mask;
+                else if (value == 3) {
+                    out[kCockpitPlanarMode4Offset + ch * 24 + scan * 3 + 2] |= mask;
+                    if (ch & 0x80) out[kCockpitPlanarMode4Offset + ch * 24 + scan * 3] |= mask;
+                }
+            }
+            for (plane = 0; plane < 4; plane++)
+                out[kCockpitPlanarNormalMode4Offset + ch * 32 + scan * 4 + plane] = p[plane];
+        }
+    }
+
+    for (ch = 0; ch < 128; ch++) {
+        for (scan = 0; scan < 8; scan++) {
+            uint8_t bits = mem[0x3800 + ch * 8 + scan], p1 = 0, p2 = 0;
+            for (pixel = 0; pixel < 4; pixel++) {
+                int value = (bits >> (6 - pixel * 2)) & 3;
+                uint8_t mask = (uint8_t)(0xC0u >> (pixel * 2));
+                if (value & 1) p1 |= mask;
+                if (value & 2) p2 |= mask;
+            }
+            out[kCockpitPlanarCompassOffset + ch * 16 + scan * 2] = p1;
+            out[kCockpitPlanarCompassOffset + ch * 16 + scan * 2 + 1] = p2;
+        }
+    }
+
+    for (ch = 0; ch < 64; ch++) {
+        for (scan = 0; scan < 8; scan++) {
+            uint8_t bits = mem[0x0400 + ch * 8 + scan];
+            uint16_t doubled = 0;
+            for (pixel = 0; pixel < 8; pixel++)
+                if (bits & (0x80u >> pixel)) doubled |= (uint16_t)(0xC000u >> (pixel * 2));
+            out[kCockpitPlanarTextMaskOffset + ch * 16 + scan * 2] = (uint8_t)(doubled >> 8);
+            out[kCockpitPlanarTextMaskOffset + ch * 16 + scan * 2 + 1] = (uint8_t)doubled;
+        }
+    }
+}
+
 // Starfield glyph tables: byte → 16-bit sprite word, rendering each star sub-position as a
 // 4-lores-px dot at its FAITHFUL offset (matches the Atari's SIZEP=$03 quad players, whose set
 // bits are 4 colour clocks = 4 Amiga px wide — measured against atari033.png).  The star
@@ -2564,6 +2642,7 @@ extern "C" { volatile uint32_t g_figBmpAddr = 0, g_cleanBmpAddr = 0, g_maskBmpAd
 #endif
 void RescueOnFractalus::initialize()
 {
+    buildCockpitPlanarAsset();
     g_flightEnhancedTerrain =
         configuredFlightTerrainRenderer() == kFlightTerrainEnhanced;
     g_enhancedPalette = configuredEnhancedPalette();
@@ -2602,7 +2681,7 @@ void RescueOnFractalus::initialize()
     extern volatile uint32_t g_terrainBmpAddr;   // chip addr of terrainBitmap->data (Stage 1 verifier dump)
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
 #endif
-    // Enhanced Graphics reads already-expanded plane bytes from cockpit_planar.bin.  Do not spend
+    // Enhanced Graphics reads already-expanded plane bytes from the startup-built BSS atlas. Do not spend
     // startup time constructing the legacy character/pixel decode LUT unless that path is active.
 #ifdef ROF_CK_VERIFY
     if (!s_dec2bppReady) buildDecode2bppLut();   // verifier deliberately retains the old oracle
@@ -7125,7 +7204,7 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
 }
 
 // Enhanced Graphics equivalent of decodeCockpitSpan().  The selected source entry is already
-// laid out as Amiga plane bytes by tools/gen_cockpit_planar.py, so this path performs no charset
+// laid out as Amiga plane bytes at startup, so this path performs no charset
 // fetch, pixel extraction, masking, or LUT conversion at runtime.  Destination geometry remains
 // deliberately identical during phase 1: the current combined 3-plane cockpit bitmap and every
 // existing Copper list continue to be the byte-exact display oracle.

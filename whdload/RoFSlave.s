@@ -72,8 +72,8 @@
 ;          15 KB  the .MEMF_CHIP hunk (14,654 bytes, objdump -h out/RoF.elf)
 ;           ? KB  the 1.3 boot's own chip use -- CLI screen bitmap, copper, fonts
 ;
-;   FAST 426 KB   the non-chip hunks: .text 200,386 + code 16,666 + .rodata 33,048
-;                 + .init_array 4 + .data 2,777 + .bss 183,440 = 436,321 bytes
+;   FAST 487 KB   the non-chip hunks: .text 222,352 + .rodata 20,524
+;                 + .init_array 4 + .data 2,924 + .bss 252,244 = 498,048 bytes
 ;           1 KB  operator new (measured: 1,272 bytes)
 ;          16 KB  the CLI stack (STACKSIZE below)
 ;           ? KB  exec/dos/filesystem-handler structures
@@ -83,7 +83,7 @@
 ; the low-water marks -- see docs/whdload-slave.md.
 
 CHIPMEMSIZE	= $4c000	;384 KB
-FASTMEMSIZE	= $78000	;480 KB
+FASTMEMSIZE	= $90000	;576 KB
 NUMDRIVES	= 1		;NOT 0: only 3.1 survives a driveless boot, 1.2/1.3 crash
 WPDRIVES	= %0000		;all emulated drives write protected
 
@@ -141,6 +141,7 @@ slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);"
 ; So quit WHDLoad instead.
 
 _program	dc.b	"RoF",0
+_romfile	dc.b	"rof.rom",0
 _args		dc.b	10		;empty argument line -- must be LF terminated
 _args_end
 	EVEN
@@ -167,6 +168,11 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 		jsr	(_LVOLoadSeg,a6)
 		move.l	d0,d7			;D7 = segment list (BPTR)
 		beq	.program_err
+
+	;Fill the executable's original-data BSS from the user-supplied cartridge.
+	;Only three audited ranges are read; the complete ROM remains installed so its
+	;provenance is explicit and no derived game-data file is distributed.
+	bsr	_load_game_data
 
 	;give the game somewhere to save its high scores (see _patch_hooks)
 		bsr	_patch_hooks
@@ -209,6 +215,103 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 		clr.l	-(a7)
 		pea	TDREASON_OSEMUFAIL
 		jmp	(resload_Abort,a2)
+
+;============================================================================
+; Locate the retained RoF!DATA descriptor in the LoadSeg hunks, load the three
+; cartridge ranges into its BSS package, then publish the ready marker.
+
+data_MAGIC0	= $526f4621		;'RoF!'
+data_MAGIC1	= $44415441		;'DATA'
+data_VERSION	= 1
+data_READY	= $52444621		;'RDF!'
+data_DESC_SIZE	= 24
+	INCLUDE	rof_data_layout.i
+
+_load_game_data
+		movem.l	d2-d6/a3-a5,-(a7)
+		lea	(_romfile,pc),a0
+		jsr	(resload_GetFileSize,a2)
+		cmp.l	#$10000,d0
+		bne	.bad
+
+		move.l	d7,d0			;current hunk BPTR
+.seg		tst.l	d0
+		beq	.bad
+		add.l	d0,d0
+		add.l	d0,d0
+		move.l	d0,a3			;hunk header
+		move.l	(-4,a3),d1		;allocated size incl header
+		move.l	(a3)+,d0		;next BPTR; A3 = first data byte
+		sub.l	#8+data_DESC_SIZE,d1
+		bmi.s	.seg
+		move.l	a3,a4
+		add.l	d1,a4
+.scan		cmpa.l	a4,a3
+		bhi.s	.seg
+		cmp.l	#data_MAGIC0,(a3)
+		bne.s	.next
+		cmp.l	#data_MAGIC1,4(a3)
+		bne.s	.next
+		cmp.w	#data_VERSION,8(a3)
+		bne	.bad
+		cmp.l	#data_SIZE,20(a3)
+		bne	.bad
+		move.l	16(a3),a5		;package BSS destination
+
+		lea	(_romfile,pc),a0
+		move.l	a5,a1
+		move.l	#data_ROM0_SIZE,d0
+		move.l	#data_ROM0_OFFSET,d1
+		jsr	(resload_LoadFileOffset,a2)
+
+		lea	(_romfile,pc),a0
+		lea	data_PACK1_OFFSET(a5),a1
+		move.l	#data_ROM1_SIZE,d0
+		move.l	#data_ROM1_OFFSET,d1
+		jsr	(resload_LoadFileOffset,a2)
+
+		lea	(_romfile,pc),a0
+		lea	data_PACK2_OFFSET(a5),a1
+		move.l	#data_ROM2_SIZE,d0
+		move.l	#data_ROM2_OFFSET,d1
+		jsr	(resload_LoadFileOffset,a2)
+
+	;Reject a different 64 KB cartridge before the executable is entered.  CRC32 uses
+	;a 16-entry nibble table: small, and much faster than eight bit steps per byte.
+		move.l	a5,a0
+		move.l	#data_SIZE,d0
+		moveq	#-1,d1
+.crcbyte	moveq	#0,d2
+		move.b	(a0)+,d2
+		eor.l	d2,d1
+		move.l	d1,d2
+		and.w	#$f,d2
+		lsl.w	#2,d2
+		lsr.l	#4,d1
+		eor.l	(_crc_table,pc,d2.w),d1
+		move.l	d1,d2
+		and.w	#$f,d2
+		lsl.w	#2,d2
+		lsr.l	#4,d1
+		eor.l	(_crc_table,pc,d2.w),d1
+		subq.l	#1,d0
+		bne.s	.crcbyte
+		not.l	d1
+		cmp.l	#data_CRC32,d1
+		bne	.bad
+
+		move.l	#data_READY,12(a3)
+		movem.l	(a7)+,d2-d6/a3-a5
+		rts
+.next		addq.l	#4,a3
+		bra.s	.scan
+.bad		pea	TDREASON_WRONGVER
+		jmp	(resload_Abort,a2)
+
+_crc_table	dc.l	$00000000,$1db71064,$3b6e20c8,$26d930ac
+		dc.l	$76dc4190,$6b6b51f4,$4db26158,$5005713c
+		dc.l	$edb88320,$f00f9344,$d6d6a3e8,$cb61b38c
+		dc.l	$9b64c2b0,$86d3d2d4,$a00ae278,$bdbdf21c
 
 ;============================================================================
 ; The external-hook block.

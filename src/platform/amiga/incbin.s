@@ -1,34 +1,41 @@
 | Asset embedding for the RoF Amiga build.
 | Each asset: .global + .incbin.  Chip-RAM assets (.MEMF_CHIP) go into a chip
 | hunk so DMA hardware (bitplanes, copper) can reach them.
+	.include "rof_data_layout.inc"
 
-| rof_boot_image.bin — the SPARSE boot memory image (tools/make_xex_sparse.py), generated
-|   from ../rof.xex + ../disasm/listing.txt.  Produces the same faithful initial mem[] the
-|   original Atari loader does — $00E7 (music gate) and all runtime state at genuine power-on
-|   values, established by the original setup code via the INITAD chain ending at game_entry
-|   $3CDE — but omits 15,467 of the 6502 INSTRUCTION bytes.  The port transliterates the code
-|   to C, so nothing is ever executed out of mem[]; the image is only a DATA source.
-|   43,066 B -> 27,872 B (-35%).  Format + the stage rule: xex_load.h (xex_sparse_stage).
-|   Which bytes go is decided by STATIC reachability (tools/xex_deadset.py reachable_map),
-|   not by play-testing: every byte any absolute, indexed or immediate-built-pointer read
-|   could touch is KEPT.  Path coverage cannot gate this — the combat path is not
-|   run-to-run deterministic (two runs of ONE binary differ in 1024 bytes).
-|   ⚠ Do NOT hand-edit or "optimise" the blob: its zero runs are load-bearing CLOBBERS of
-|     earlier segments (segment 16 buries the logo staged at $5000 and the station image at
-|     $4000), which is why the generator simulates mem[] rather than filtering dead bytes.
-|   `make FULLXEX=1` embeds the original ../rof.xex instead and switches the loader back to
-|   the segment walk — the A/B to reach for if the sparse image is ever suspected.
-	.section .rodata
+| User-owned cartridge data.  The normal/release executable reserves only BSS; the
+| WHDLoad slave finds rof_data_descriptor and loads three ranges from the installed
+| complete rof.rom.  An explicit STANDALONE_DATA build embeds the ignored package made
+| by tools/extract_rom_data.py.  The descriptor itself contains no original data.
+	.section .data
 	.balign 4
-	.global rof_boot_image
-	.global rof_boot_image_end
-rof_boot_image:
-.ifdef ROF_FULL_XEX
-	.incbin "../rof.xex"
+	.global rof_data_descriptor
+rof_data_descriptor:
+	.long 0x526f4621,0x44415441       | 'RoF!','DATA'
+	.word 1,0
+.ifdef ROF_STANDALONE_DATA
+	.long 0x52444621                  | 'RDF!' — package populated
 .else
-	.incbin "assets/rof_boot_image.bin"
+	.long 0
 .endif
-rof_boot_image_end:
+	.long rof_game_data
+	.long ROF_DATA_PACKAGE_SIZE_ASM
+
+.ifdef ROF_STANDALONE_DATA
+	.section .rodata
+.else
+	.section .bss
+.endif
+	.balign 4
+	.global rof_game_data
+	.global rof_game_data_end
+rof_game_data:
+.ifdef ROF_STANDALONE_DATA
+	.incbin "generated/rof_data.bin"
+.else
+	.space ROF_DATA_PACKAGE_SIZE_ASM
+.endif
+rof_game_data_end:
 
 | atari_charset.bin — the Atari internal CHARACTER SET, $E000-$E3FF (1 KB, 128 glyphs x
 |   8 rows).  This is the ONLY thing the port reads out of the Atari OS ROM: the
@@ -49,16 +56,14 @@ atari_charset:
 	.incbin "assets/atari_charset.bin"
 atari_charset_end:
 
-| Faithful cockpit source in native Amiga plane-byte form.  Unlike the former cockpit.raw,
-| this is not a frozen screen: it contains complete lookup atlases for all mode-D bytes,
-| all mode-4 character/attribute values, the compass, and the cockpit-top text masks.
-| Runtime instrument state still selects the entry, but performs only direct plane copies.
-| Generated and exhaustively checked by tools/gen_cockpit_planar.py.
+| Faithful cockpit lookup atlas, generated at startup from the cartridge-provided glyphs.
+| It is always BSS: no original or derived game graphics live in the executable.
+	.section .bss
 	.balign 4
 	.global rof_cockpit_planar
 	.global rof_cockpit_planar_end
 rof_cockpit_planar:
-	.incbin "assets/cockpit_planar.bin"
+	.space 17952
 rof_cockpit_planar_end:
 
 | Optional standalone-build copy of the WHDLoad enhanced logo assets.  The normal

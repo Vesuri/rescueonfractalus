@@ -34,10 +34,10 @@ all : $(SLAVE)
 
 LOGO_ASSETS = assets/enhanced_logo.bin assets/enhanced_games.bin assets/enhanced_logo.pal
 
-$(SLAVE) : $(SLAVE_SOURCE) $(LOGO_ASSETS)
+$(SLAVE) : $(SLAVE_SOURCE) rof_data_layout.i $(LOGO_ASSETS)
 	basm $(SLAVE_OPTS) -o$(SLAVE) $(SLAVE_SOURCE)
 
-$(TUNE_SLAVE) : $(SLAVE_SOURCE) $(LOGO_ASSETS)
+$(TUNE_SLAVE) : $(SLAVE_SOURCE) rof_data_layout.i $(LOGO_ASSETS)
 	basm $(SLAVE_OPTS) -dTUNE=1 -o$(TUNE_SLAVE) $(SLAVE_SOURCE)
 
 clean:

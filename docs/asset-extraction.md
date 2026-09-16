@@ -4,7 +4,13 @@ The design record for the last item of the incbin cleanup (`amiga-release-packag
 item 1). Read this before touching `src/xex_load.h`, `src/platform/amiga/XexImage.cpp`,
 `src/platform/amiga/incbin.s` or `tools/make_xex_sparse.py`.
 
-**Status: SHIPPED.** `assets/rof_boot_image.bin` (27,872 B) replaced the embedded `rof.xex`
+**Status: SUPERSEDED FOR SHIPPING (2026-09-16).** This document remains the historical proof
+behind the sparse image. The current executable no longer embeds either form: see
+`docs/copyright-data-extraction-plan.md`. `rof_game_data` is BSS in the release build and the
+WHDLoad slave fills it from the user's complete XEGS `rof.rom`. The files and `FULLXEX` switch
+described below have been retired.
+
+Previously, `assets/rof_boot_image.bin` (27,872 B) replaced the embedded `rof.xex`
 (43,066 B); `out/RoF` 334,100 → 318,764 B (and **291,480 B** after the 2026-08-14 relocation-table
 pass — see the size ledger at the end). The removal is gated on **static reachability**
 (§5), not on play-testing — because the combat path turned out not to be run-to-run

@@ -15,8 +15,10 @@
  -------------
  This install requires WHDLoad version 16.0 or better to be in the path. It
  can be found in the WHDLoad package.
- Nothing has to be copied from an original disk, the game ships in this
- archive.
+ The installer asks for a complete 65536-byte XEGS Rescue on Fractalus!
+ cartridge image named rof.rom. The archive and executable contain no original
+ game data. The Slave reads the required ranges from the installed ROM before
+ starting the game.
 
  The installed program requires 384 KB ChipMem and 832 KB OtherMem. PAL only.
  It can be quit by pressing the left mouse button, immediately and without

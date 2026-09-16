@@ -45,11 +45,10 @@ This set is primarily graphic construction material, not prose text. It builds t
 and instrument faces, the compass, bar-gauge and indicator states, targeting-scope details,
 lock-on lights, and the changing numeric cells across the bottom dashboard.
 
-On Amiga, Enhanced Graphics does not interpret these bytes at runtime. The build-time
-`tools/gen_cockpit_planar.py` generator expands every mode-4 character/attribute combination,
-mode-D byte, compass state, and cockpit-top text mask into `amiga/assets/cockpit_planar.bin`.
-Runtime updates select an entry and copy its already interleaved four-plane bytes. The faithful
-toggle-off renderer retains the original three-plane decoder as its comparison path.
+On Amiga, startup expands every mode-4 character/attribute combination, mode-D byte, compass
+state, and cockpit-top text mask from the cartridge-loaded glyphs into a BSS planar atlas.
+Runtime updates then select an entry and copy its already interleaved four-plane bytes. The
+faithful toggle-off renderer retains the original three-plane decoder as its comparison path.
 
 ## Derived cockpit digits
 
@@ -170,17 +169,18 @@ The `$0400` and `$3800` data come from the repository's verified 64 KiB runtime 
 `disasm/rof_mem.bin`; the same bytes were checked against the saved Atari states for title,
 standby, launch, and flight. The OS set comes from `amiga/assets/atari_charset.bin`.
 
-The Amiga build embeds these through `src/platform/amiga/incbin.s`:
+The current Amiga build sources the game-specific rows through `rof_game_data`; only the Atari
+OS character set remains embedded through `src/platform/amiga/incbin.s`:
 
 | Export | Default embedded file | File offset(s) | Full-XEX file offset |
 |---|---|---|---|
 | Atari system font | `amiga/assets/atari_charset.bin` | `$0000-$03FF` | separate asset in both builds |
-| RoF text font | `amiga/assets/rof_boot_image.bin` | sparse fragments listed below | `rof.xex` `$2644-$2843` |
-| Cockpit tiles | `amiga/assets/rof_boot_image.bin` | sparse fragments listed below | `rof.xex` `$28FE-$2CFD` |
-| Cockpit digit map | `amiga/assets/rof_boot_image.bin` | `$3558-$357F` | `rof.xex` `$3B07-$3B2E` |
-| Amiga cockpit planar atlas | `amiga/assets/cockpit_planar.bin` | generated from the sources above | generated in both builds; consumed by Enhanced Graphics |
+| RoF text font | user `rof.rom` package | reconstructed at `$0400-$05FF` | v4.1 data mapping |
+| Cockpit tiles | user `rof.rom` package | reconstructed at `$3800-$3BFF` | v4.1 data mapping |
+| Cockpit digit map | user `rof.rom` package | reconstructed at `$4AE3-$4B0A` | v4.1 data mapping |
+| Amiga cockpit planar atlas | BSS | generated at startup from the rows above | consumed by Enhanced Graphics |
 
-`rof_boot_image.bin` is a sparse load stream rather than a flat memory image. Its four-byte
+The retired `rof_boot_image.bin` was a sparse load stream rather than a flat memory image. Its four-byte
 chunk headers hold a destination address and length, and zero bytes omitted from the stream are
 supplied by the loader's initial RAM clear. Consequently, the two full character sets do not have
 one contiguous offset in the default file. The retained payload fragments are:
@@ -191,7 +191,7 @@ one contiguous offset in the default file. The retained payload fragments are:
   `$270B-$271B`, `$2720`, `$2725-$2885`, `$288A-$288C`, `$2891-$2990`.
 
 The corresponding runtime destinations are `$0400-$05FF`, `$3800-$3BFF`, and `$4AE3-$4B0A`.
-With `FULLXEX=1`, `incbin.s` embeds `rof.xex` instead of the sparse file, producing the contiguous
-full-XEX offsets shown in the table.
+These offsets are retained only as provenance for the old proof; neither sparse nor full XEX is
+an available shipping build now.
 
 Regenerate all four images with `python3 tools/export_font_strips.py`.

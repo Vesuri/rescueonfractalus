@@ -72,6 +72,7 @@ CXX_SRCS := \
 # for self-modifying routines (rof_manual).  --gc-sections drops the unused funcs.
 CORE_C_SRCS := \
     $(REPO)/src/cpu/cpu.c \
+    $(REPO)/src/rof_data.c \
     $(REPO)/src/rof_boot.c \
     $(REPO)/src/rof_hiscore.c \
     $(REPO)/src/rof_logo.c \
@@ -962,16 +963,14 @@ CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++1
             -I"$(AMIGA_SRC)" \
             -I"$(REPO)/src/platform" \
             -I"$(CURDIR)"
-ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)"
+ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)" -I"$(AMIGA_SRC)"
 ifneq ($(strip $(ENHANCED_GRAPHICS)$(ENHANCED_LOGO)),)
 ASFLAGS   += --defsym ROF_ENHANCED_LOGO=1 --defsym ROF_ENHANCED_GRAPHICS=1
 endif
-# `make FULLXEX=1` embeds the original ../rof.xex instead of the sparse boot image and
-# switches XexImage.cpp back to the segment walk — the A/B for suspecting the sparse image.
-# The define has to reach BOTH the assembler (.ifdef in incbin.s) and the C++ side.
-ifdef FULLXEX
-ASFLAGS   += --defsym ROF_FULL_XEX=1
-EXTRA_DEFINES += -DROF_FULL_XEX
+# `make standalone ROM=/path/rof.rom` embeds the extracted user-owned data package.
+ifdef STANDALONE_DATA
+ASFLAGS   += --defsym ROF_STANDALONE_DATA=1
+EXTRA_DEFINES += -DROF_STANDALONE_DATA
 endif
 # vasm (Motorola syntax) for the framework *Assembler.s.  -m68010: the only >68000
 # instruction is `movec vbr,d0` in getVBR (the C++ getVBR already emits movec via raw
@@ -1053,9 +1052,9 @@ obj/StartupConfig.o : $(AMIGA_SRC)/StartupConfig.s
 # incbin.s lives in the unified tree ($(AMIGA_SRC)) but its .incbin paths are resolved
 # relative to this amiga/ build dir (where assets/ and ../rof.xex live) via ASFLAGS
 # -I"$(CURDIR)"; INCBIN_DEPS are likewise listed relative to amiga/.
-INCBIN_DEPS := assets/rof_boot_image.bin assets/atari_charset.bin assets/cockpit_planar.bin
-ifdef FULLXEX
-INCBIN_DEPS := ../rof.xex assets/atari_charset.bin assets/cockpit_planar.bin
+INCBIN_DEPS := assets/atari_charset.bin
+ifdef STANDALONE_DATA
+INCBIN_DEPS += generated/rof_data.bin
 endif
 ifneq ($(strip $(ENHANCED_GRAPHICS)$(ENHANCED_LOGO)),)
 INCBIN_DEPS += ../whdload/assets/enhanced_logo.bin \
@@ -1063,16 +1062,19 @@ INCBIN_DEPS += ../whdload/assets/enhanced_logo.bin \
                ../whdload/assets/enhanced_logo.pal
 endif
 
-# assets/rof_boot_image.bin — the SPARSE boot image that replaced the embedded rof.xex
-# (43,066 -> 27,872 B).  Regenerated whenever the xex, the disassembly it derives the
-# instruction map from, or either tool changes.  docs/asset-extraction.md.
-assets/rof_boot_image.bin: ../rof.xex ../disasm/listing.txt \
-                           ../tools/make_xex_sparse.py ../tools/xex_deadset.py
-	$(info GEN  $@)
-	@python3 ../tools/make_xex_sparse.py $@
-obj/incbin.o : $(AMIGA_SRC)/incbin.s $(INCBIN_DEPS)
+generated/rof_data.bin: $(ROM) ../tools/extract_rom_data.py
+	@test -n "$(ROM)" || { echo "error: use make standalone ROM=/path/to/rof.rom"; exit 1; }
+	$(info EXTRACT $@)
+	@python3 ../tools/extract_rom_data.py "$(ROM)" $@
+obj/incbin.o : $(AMIGA_SRC)/incbin.s $(AMIGA_SRC)/rof_data_layout.inc $(INCBIN_DEPS)
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(abspath $(AMIGA_SRC)/incbin.s)"
+
+# The embedded-vs-BSS choice is an assembler command-line define, which make cannot infer
+# from timestamps.  Reassemble this small object on every invocation so a preceding standalone
+# build can never leak its package into a later default/release link.
+.PHONY: FORCE_INCBIN_MODE
+obj/incbin.o: FORCE_INCBIN_MODE
 
 # Framework hand-written asm (vasm, Motorola syntax -> ELF).  Static pattern rule so
 # it doesn't collide with the gas-assembled gcc8_a_support.s / incbin.s (explicit rules).
@@ -1082,5 +1084,11 @@ $(FRAMEWORK_ASM_OBJS) : obj/%.o : %.s
 
 clean:
 	@$(RM) -r obj/ out/
+
+.PHONY: standalone
+standalone:
+	@test -n "$(ROM)" || { echo "error: ROM=/path/to/rof.rom is required"; exit 1; }
+	@$(MAKE) clean
+	@$(MAKE) STANDALONE_DATA=1 ROM="$(ROM)" all
 
 -include $(CXX_OBJS:.o=.d) $(CORE_C_OBJS:.o=.d) $(SUPPORT_C_OBJS:.o=.d)

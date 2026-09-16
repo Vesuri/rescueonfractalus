@@ -168,7 +168,6 @@ HOSTPROOF_SELF := \
     ras_restructure_test \
     terr_blend_table_test \
     terr_blend_test
-# Needs the two boot-image assets built first (see the rules below).
 HOSTPROOF_ASSET := test_xex_sparse
 
 # The same-length zeroed xex and the sparse boot image, regenerated here rather than
@@ -184,13 +183,7 @@ $(HOSTPROOF_DIR)/sparse.bin: rof.xex disasm/listing.txt tools/make_xex_sparse.py
 	$(info GEN  $@)
 	@python3 tools/make_xex_sparse.py $@ > $(HOSTPROOF_DIR)/sparse.log
 
-cockpit-planar-assets:
-	python3 tools/gen_cockpit_planar.py amiga/assets/cockpit_planar.bin
-
-cockpit-planar-check:
-	@python3 tools/gen_cockpit_planar.py --check amiga/assets/cockpit_planar.bin
-
-hostproof: cockpit-planar-check $(HOSTPROOF_DIR)/zeroed.xex $(HOSTPROOF_DIR)/sparse.bin | $(HOSTPROOF_DIR)
+hostproof: $(HOSTPROOF_DIR)/zeroed.xex $(HOSTPROOF_DIR)/sparse.bin | $(HOSTPROOF_DIR)
 	@fail=0; ran=0; \
 	for t in $(HOSTPROOF_SELF) $(HOSTPROOF_ASSET); do \
 	  case "$$t" in *$(FN)*) ;; *) continue ;; esac; \

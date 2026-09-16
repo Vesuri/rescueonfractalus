@@ -22,18 +22,20 @@ scratch.  Grouped by what it is FOR; the file's own docstring/header has the usa
 | `check_chip_bss.py` | Link-time guard: fails the Amiga build if a `__chip` variable carries a static initialiser (it would be silently discarded — `docs/asset-extraction.md` §6.1). |
 | `make_whdload_manual.py` | Renders the WHDLoad install's manual; run by `whdload/create_release.sh`. |
 
-## Baked-asset generators — these keep a committed artifact reproducible
+## External game-data tools
 
 | Tool | Produces |
 |---|---|
-| `gen_logo_field.py` | `src/rof_logo_field.h` — replays the Atari's own `$5111` stroke plotter, so the baked logo is derived, not a magic blob. |
-| `plot_logo_ref.py` | The proof for the above: re-plots from `rof.xex` and diffs against the committed header (expect 0 mismatches). |
 | `gen_gtia9_pal.py` | The GTIA mode-9 16-luminance OCS palettes used by the boot scenes' copper lists. |
-| `gen_cockpit_planar.py` | `amiga/assets/cockpit_planar.bin` — builds the native Amiga plane-byte tables for the cockpit, compass, and cockpit-top text, then exhaustively proves them against the legacy decoder. `make cockpit-planar-assets` regenerates; `make cockpit-planar-check` verifies. |
+| `extract_rom_data.py` | Verifies a user-supplied 64 KB XEGS `rof.rom` and extracts the three audited ranges used by an explicit standalone Amiga build. Output is ignored and never released. |
+| `rof_data_layout.py` | Single range manifest; generates the matching C and WHDLoad assembler constants (`--check` verifies them). |
+| `gen_rom_recipe.py` | Developer-only migration tool which generated `src/rof_data_recipe.h`: destination/package-offset/length triples, with no original bytes, reproducing the established v4.1 staged boot memory from XEGS data. |
+| `verify_rom_recipe.py` | Given the user's `rof.rom`, proves the copy recipe recreates all four audited v4.1 boot-stage RAM snapshots. |
+| `audit_release_data.py` | Release gate: proves the original-data and generated-cockpit regions are BSS and rejects a standalone/data-bearing executable. |
 
 ## Host-side equivalence proofs (`make hostproof`)
 
-`gen_cockpit_planar.py`, `alien_mirror_test.c`, `dot_table_test.c`, `ras_fused_midpoint_test.c`, `ras_restructure_test.c`,
+`alien_mirror_test.c`, `dot_table_test.c`, `ras_fused_midpoint_test.c`, `ras_restructure_test.c`,
 `terr_blend_table_test.c`, `terr_blend_test.c`, `test_xex_sparse.c`.
 
 Each compiles the OLD and NEW form of one routine side by side and diffs them over its whole input

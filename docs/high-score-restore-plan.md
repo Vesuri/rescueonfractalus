@@ -58,7 +58,7 @@ offset  0 1 2 3 4 5 6 7   8   9 10  11   12 .. 19
   `+0..+7`. Then the player types the name, `render_text_cell $5CA7` blitting each glyph into
   `$3700+X`.
 
-The factory contents of all of that are in `src/rof_hiscore_factory.h` — see W3.
+The factory contents now come from the user-supplied cartridge at ROM offset `$6200` — see W3.
 
 ## 2. Work items
 
@@ -108,9 +108,10 @@ The factory contents of all of that are in `src/rof_hiscore_factory.h` — see W
 - Still untested: the FASTMEMSIZE cost of holding `dos.library` open (`docs/whdload-slave.md:125`
   lists dos/filesystem structures as an untuned `?`).
 
-### W3 — the default block — ✅ **the ORIGINAL bytes, already extracted**
-No synthesis needed after all (2026-08-17): **`src/rof_hiscore_factory.h`** holds the real
-factory-fresh table, 200 bytes for `$3700-$37C7`:
+### W3 — the default block — ✅ **loaded from the user's ROM**
+The real factory-fresh table is 200 bytes for `$3700-$37C7`. It was formerly a compiled header;
+as of 2026-09-16 `rof_hiscore_init()` reads it from cartridge offset `$6200` through the shared
+data package (or directly from local `rof.rom` in the SDL developer build):
 
 ```
 HIGHEST SCORING ACES        (mode 7, colour 0 — first byte $28, which is what validate_save_state wants)

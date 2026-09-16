@@ -201,13 +201,25 @@
 
     (				;----- 3 = DOS (Files) -----
 
-      ;There is nothing to image and nothing to copy off an original disk: the whole
-      ;game is one self-contained executable that ships inside this archive.  #dest is
-      ;already <install>/data here (see #sub-dir), which is what the Slave's
-      ;ws_CurrentDir points at.
+      ;The executable contains no original game data.  Copy it, then ask for the user's
+      ;complete 64 KB XEGS cartridge image.  The slave validates its size and reads only
+      ;the three ranges required by the port into the executable's BSS data region.
       (copyfiles
         (help @copyfiles-help)
 	(source "RoF")
+        (dest #dest)
+      )
+
+      (set #SF_prompt "Please select the 64 KB XEGS Rescue on Fractalus! cartridge image (rof.rom).")
+      (set #SF_default_filename "rof.rom")
+      (P_SelectFile)
+      (if (= #SF_filename "")
+        (abort "Installation cancelled: rof.rom is required.")
+      )
+      (copyfiles
+        (help @copyfiles-help)
+        (source #SF_filename)
+        (newname "rof.rom")
         (dest #dest)
       )
 

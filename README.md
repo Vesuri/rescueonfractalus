@@ -20,19 +20,35 @@ This is a faithful 1:1 reimplementation, rebuilt from the original game rather t
 
 ## How to run
 
-Copy `RoF` to your Amiga and start it — from Workbench, or from a Shell:
+The normal release executable is intended for WHDLoad and contains no original game data.
+For direct Workbench or Shell use, build a standalone executable from your own 64 KB XEGS
+cartridge image:
+
+```sh
+cd amiga
+. ./env.sh
+make standalone ROM=/path/to/rof.rom
+```
+
+Then copy `out/RoF` to your Amiga and start it:
 
 ```
 RoF
 ```
 
-Nothing else is needed; all game data is inside the executable.
+The generated data package is ignored by Git and is included only in this explicitly requested
+standalone build.
 
 On an emulator, point a hard drive at the folder containing `RoF` and run it from there.
 
 ### WHDLoad
 
-There is also a WHDLoad install, which runs the same unmodified executable. It needs more
+The WHDLoad install ships the default BSS executable and asks you to select your complete
+65,536-byte XEGS `rof.rom`. The installer copies the ROM into the game directory; the slave
+loads only the required ranges before starting the executable. Neither the ROM nor an extracted
+data package is included in this repository or release archive.
+
+The install needs more
 than the plain version does: **2 MB of RAM**, and an A500 **Kickstart 1.3 image**
 (`kick34005.A500` plus its `.RTB`) in `Devs:Kickstarts` — the game uses the operating system
 to take the display over, and WHDLoad leaves none, so the slave boots a real Kickstart and

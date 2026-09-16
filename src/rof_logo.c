@@ -9,15 +9,10 @@
  * So this file is hand-written from a disassembly of segment 5 taken straight out of
  * rof.xex.  Everything below carries the $5000-page address it came from.
  *
- * THE BITMAP IS BAKED (user decision, docs/logo-station-plan.md §1.3).  The Atari does not
- * store the picture: it PLOTS it, expanding ~130 bytes of run-length stroke data at $525F
- * through the $5111 stroke plotter into the 2480-byte mode-F field at $60A3.  That plotter is
- * deliberately not ported, because it runs with playfield DMA OFF (DMACTL = $20) and only the
- * finished picture is ever revealed (DMACTL = $3A) — so pasting the baked result is
- * bit-identical to what the player sees.  The bake is verified: re-running the plotter over
- * $525F reproduces src/rof_logo_field.h byte for byte (0 mismatches in 2480 + 143 bytes).
- * Everything ELSE $5000 does — the display list, the timing, the audio sweep, the sparkle —
- * IS ported faithfully below, because all of it is visible or audible.
+ * The Atari does not store the bitmap: it plots it from the run-length stroke data at $525F.
+ * The port now replays that plotter at runtime too, so no derived Logo field is compiled into
+ * the executable.  Everything else $5000 does — display list, timing, audio and sparkle — is
+ * likewise ported faithfully below.
  */
 #include "cpu/cpu.h"
 #include "cpu/bus.h"
@@ -25,7 +20,10 @@
                                wait_frames_2 ($3CCA) — all in segments the logo survives with */
 #include "platform/platform_c.h"
 #include "rof_boot.h"
-#include "rof_logo_field.h"
+
+#define ROF_LOGO_FIELD_ADDR    0x60A3u
+#define ROF_LOGO_FIELD_ROWS    62u
+#define ROF_LOGO_FIELD_STRIDE  40u
 
 /* See rof_boot.h for what the renderer does with these. */
 volatile unsigned char g_logoFieldGen   = 0;
@@ -127,29 +125,103 @@ static int logo_aborted(void)
 static int logo_aborted(void) { return 0; }
 #endif
 
-/* $5053/$505A/$5061 — the three stroke-plotter passes that draw "LUCASFILM" (shade-2 drop
- * shadow, then the fat dark gradient outline, then the thin bright core).  Baked: see the file
- * header.  The paste is the whole 62-row field, which is also what makes the first decode on
- * the render side a single flat block. */
+/* The original $5111 stroke plotter.  This used to be represented by a 2,623-byte compiled
+ * bitmap.  Replaying it from the cartridge-sourced stream at $525F removes that original-game
+ * payload from the executable while preserving the pixels exactly. */
+static void logo_plot_nibble(unsigned col, unsigned row, unsigned shade)
+{
+    uint16_t a = (uint16_t)(0x6053u + row * 40u + (col >> 1));
+    uint8_t v = mem[a];
+    mem[a] = (uint8_t)((col & 1u) ? ((v & 0xF0u) | shade)
+                                    : ((v & 0x0Fu) | (shade << 4)));
+}
+
+static void logo_plot_pair(unsigned col, unsigned row, unsigned shade)
+{
+    logo_plot_nibble(col, row - 1u, shade);
+    logo_plot_nibble(col, row, shade);
+}
+
+static void logo_plot_brush(unsigned col, unsigned row, unsigned shade, int fat)
+{
+    if (!fat) {
+        logo_plot_pair(col, row, shade);
+    } else {
+        logo_plot_pair(col,     row - 2u, shade);
+        logo_plot_pair(col + 1, row - 2u, shade);
+        logo_plot_pair(col + 1, row,      shade);
+        logo_plot_pair(col,     row,      shade);
+    }
+}
+
+static unsigned logo_plot_cell(uint8_t pattern, unsigned col, unsigned row,
+                               unsigned pass, int fat)
+{
+    unsigned shade;
+    unsigned x = col + 8u;
+    int bit;
+    if (pass)
+        shade = (pass == 2u) ? 2u : ((row >> 2) == 8u ? 7u : row >> 2);
+    else
+        shade = ((((row - 2u) & 0xFFu) >> 2) ^ 0x0Fu);
+    for (bit = 0; bit < 8; bit++) {
+        --x;
+        if (pattern & 1u) logo_plot_brush(x, row, shade, fat);
+        pattern >>= 1;
+    }
+    return row + 2u;
+}
+
+static unsigned logo_plot_strip(unsigned stream, unsigned col, unsigned row,
+                                unsigned pass, int fat)
+{
+    uint8_t pattern = mem[0x525Fu + stream++];
+    unsigned run = 1;
+    for (;;) {
+        unsigned n;
+        for (n = 0; n < run; n++) row = logo_plot_cell(pattern, col, row, pass, fat);
+        {
+            uint8_t code = mem[0x525Fu + stream];
+            unsigned high;
+            if (code == 0) return stream + 1u;
+            run = code & 0x1Fu;
+            high = code >> 5;
+            if (high == 0) {
+                pattern = mem[0x525Fu + stream + 1u];
+                stream += 2u;
+            } else {
+                pattern = mem[0x52DFu + high];
+                stream++;
+            }
+        }
+    }
+}
+
+static void logo_plot_word(unsigned count, unsigned stream, unsigned col, unsigned row,
+                           unsigned pass, int fat)
+{
+    while (count--) {
+        stream = logo_plot_strip(stream, col, row, pass, fat);
+        col += 8u;
+    }
+}
+
 static void logo_paste_lucasfilm(void)
 {
     unsigned i;
-    for (i = 0; i < sizeof kLogoField; i++)
-        mem[ROF_LOGO_FIELD_ADDR + i] = kLogoField[i];
+    for (i = 0; i < ROF_LOGO_FIELD_ROWS * ROF_LOGO_FIELD_STRIDE; i++)
+        mem[ROF_LOGO_FIELD_ADDR + i] = 0;
+    logo_plot_word(9, 0x00, 5, 4, 2, 1);
+    logo_plot_word(9, 0x00, 4, 3, 1, 1);
+    logo_plot_word(9, 0x00, 4, 3, 0, 0);
     g_logoFieldGen++;
 }
 
-/* $50B4/$50BB — the two passes that add "GAMES" 86 frames after the reveal.  They touch only
- * an 11 x 13-byte rectangle of the field, which is exactly what rof_logo_field.h carries. */
+/* $50B4/$50BB — the two passes that add "GAMES" 86 frames after the reveal. */
 static void logo_paste_games(void)
 {
-    unsigned r, c;
-    const unsigned char* s = kLogoGames;
-    uint16_t a = (uint16_t)(ROF_LOGO_FIELD_ADDR
-                            + ROF_LOGO_GAMES_ROW * ROF_LOGO_FIELD_STRIDE + ROF_LOGO_GAMES_COL);
-    for (r = 0; r < ROF_LOGO_GAMES_ROWS; r++, a += ROF_LOGO_FIELD_STRIDE)
-        for (c = 0; c < ROF_LOGO_GAMES_COLS; c++)
-            mem[a + c] = *s++;
+    logo_plot_word(4, 0x66, 20, 0x36, 2, 0);
+    logo_plot_word(4, 0x66, 19, 0x35, 1, 0);
     g_logoFieldGen++;
 }
 

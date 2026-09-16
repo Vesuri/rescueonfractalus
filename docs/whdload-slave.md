@@ -76,6 +76,18 @@ why `_bootdos` aborts unconditionally instead of returning to the CLI: WHDLoad's
 `_bootdos` examples make that a choice (their `QUIT_AFTER_PROGRAM_EXIT` switch), but here
 returning would strand a 68000 user with no exit at all.
 
+### External cartridge data before entry
+
+The release `RoF` has a retained `RoF!DATA` descriptor but reserves its 42,726-byte game-data
+package as BSS. After `LoadSeg`, the slave scans the hunks for that descriptor, requires the
+installed `rof.rom` to be exactly 65,536 bytes, and loads the three generated-layout ranges
+directly into the BSS region. A CRC32 then rejects a same-sized but unsupported cartridge. The
+slave publishes the `RDF!` ready marker only after all reads and validation complete;
+the executable validates the descriptor, CRC32, and sentinels before reconstructing the four
+v4.1 computer boot stages. The complete ROM is copied by the installer, but is never included in
+the release archive. Constants come from `tools/rof_data_layout.py` via
+`whdload/rof_data_layout.i`, so the extractor, game, and slave share one range manifest.
+
 ### `slv_Version = 17` and Custom1 border blanking
 
 Version 17 exposes `ws_config`. This slave declares
@@ -131,7 +143,7 @@ What has to fit:
 | chip: runtime `AllocMem(MEMF_CHIP)` | 217,408 | **measured** — `amiga/memreport.gdb`, KS 3.1 / A500+ |
 | chip: `.MEMF_CHIP` hunk | 14,654 | `objdump -h out/RoF.elf`. Since 2026-08-14 a **BSS** hunk (`amiga/memf_chip_bss.ld`) — 14,632 B smaller in the *file*, identical chip RAM **requirement**, so `CHIPMEMSIZE` is unaffected |
 | chip: the 1.3 boot's own use | ? | CLI screen bitmap, copper, fonts |
-| fast: non-chip hunks | 436,321 | `.text` 200,386 + `code` 16,666 + `.rodata` 33,048 + `.init_array` 4 + `.data` 2,777 + `.bss` 183,440 |
+| fast: non-chip hunks | 498,048 | `.text` 222,352 + `.rodata` 20,524 + `.init_array` 4 + `.data` 2,924 + `.bss` 252,244 (2026-09-16 default external-data build) |
 | fast: `operator new` | 1,272 | **measured**, same run |
 | fast: the CLI stack | 16,384 | `STACKSIZE` (V33's default is 4000) |
 | fast: exec/dos/filesystem structures | ? | |

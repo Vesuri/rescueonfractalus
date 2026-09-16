@@ -16,7 +16,7 @@ around anyway:
    loader, so its boot code spells the intended order out in one routine. **For that transition,
    `rof.rom` is the authoritative source, not `rof.xex`.** See §3.
 3. **The factory high-score block**, which 5.0 ships in ROM because a cart has no disk to read it
-   from (`docs/high-score-restore-plan.md`, `src/rof_hiscore_factory.h`).
+   from (`docs/high-score-restore-plan.md`; now read from ROM offset `$6200`).
 
 ---
 
@@ -144,7 +144,7 @@ that mapping properly needs a per-region alignment inside bank 4 and has not bee
 `name_entry_loop`'s call site survives in 5.0 — it just calls the `RTS`. So 5.0 **shows the initials
 entry and keeps a high-score table, but has no persistence at all**: the table is factory-fresh on
 every power-up. `rof.rom` offset `$6200` is that 256-byte block (`$3700 = $28`, `$3714 = $EE`,
-signature at `$37C7`); it is the source of `src/rof_hiscore_factory.h`.
+signature at `$37C7`); it is the runtime source of the factory block.
 
 ### 4.2 The initials entry is rewritten for a joystick
 
