@@ -7161,8 +7161,22 @@ void RescueOnFractalus::copyCockpitPlanarSpan(uint16_t addr, uint8_t nCells)
         if (col < 0 || col >= 40) continue;
         const uint8_t* tile = cockpitMode4NormalPlanar(mem[(uint16_t)(addr + i)]);
         uint8_t* p = base + col;
+        uint8_t gaugeMask = 0;
+        bool altimeter = false;
+        if (entry >= 1u && entry < 8u) {
+            if      (col == 13) { gaugeMask = 0x0Fu; altimeter = true; }
+            else if (col == 14) { gaugeMask = 0xF0u; altimeter = true; }
+            else if (col == 25) { gaugeMask = 0x0Fu; }
+            else if (col == 26) { gaugeMask = 0xF0u; }
+        }
         for (int scan = 0; scan < 8; scan++, p += kRowBytes, tile += 4) {
             p[0] = tile[0]; p[40] = tile[1]; p[80] = tile[2]; p[120] = tile[3];
+            if (gaugeMask) {
+                const uint8_t keep = (uint8_t)~gaugeMask;
+                p[0] &= keep; p[40] &= keep; p[80] &= keep; p[120] &= keep;
+                p[40] |= gaugeMask; p[80] |= gaugeMask; p[120] |= gaugeMask; // altitude pen 14
+                if (!altimeter) p[0] |= gaugeMask;                           // energy pen 15
+            }
         }
     }
 }
@@ -7298,11 +7312,12 @@ void RescueOnFractalus::decodeCockpitFull()
     initializeAHDetailPlanes();    // cockpit BPL3 is now valid; bake AH sprite word B once
 }
 
-// Replace only pen-0 pixels inside the two 8x56 dial openings. Static markings and bezels are
-// non-zero and therefore remain in front exactly as they were when the bars were sprites. Pen 8
-// is energy; pen 9 is the overlaid terrain/ship altimeter column. The Copper initially assigns
-// both the dial background, so installing these masks is visually inert until transition events
-// are enabled. Coordinates are the documented screen positions relative to cockpit line 172.
+// Replace the complete two 8x56 indicator rectangles with dedicated pens. Pen 14 is the left
+// altitude column; pen 15 is the right energy column. The Copper initially assigns both pens the dial
+// background (#022), then changes each pen at the first filled scanline. No source-art pen may
+// remain inside either rectangle: that would fragment the bar or keep part of it permanently at
+// the background colour. copyCockpitPlanarSpan applies the same override to later dirty-cell
+// updates, so dynamic cockpit writes cannot punch holes back into these rectangles.
 void RescueOnFractalus::installGaugeMaskPens()
 {
     if (!cockpitBitmap || cockpitBitmap->bitplanes != 4) return;
@@ -7314,10 +7329,11 @@ void RescueOnFractalus::installGaugeMaskPens()
         uint8_t* row = bitmap + y * stride;
         for (int part = 0; part < 4; part++) {
             const int x = byteColumns[part];
-            const uint8_t occupied = (uint8_t)(row[x] | row[40 + x] | row[80 + x] | row[120 + x]);
-            const uint8_t mask = (uint8_t)(bitMasks[part] & (uint8_t)~occupied);
-            row[120 + x] |= mask;              // both pens have bit 3
-            if (part < 2) row[x] |= mask;      // altimeter pen 9 also has bit 0
+            const uint8_t mask = bitMasks[part];
+            const uint8_t keep = (uint8_t)~mask;
+            row[x] &= keep; row[40 + x] &= keep; row[80 + x] &= keep; row[120 + x] &= keep;
+            row[40 + x] |= mask; row[80 + x] |= mask; row[120 + x] |= mask; // altitude pen 14
+            if (part >= 2) row[x] |= mask;                                  // energy pen 15
         }
     }
 }

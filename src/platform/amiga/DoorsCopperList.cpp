@@ -185,8 +185,8 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     d[INDEX_DASH_PAL + 3]  = copperMove(color03, atariToOCS(0x26));
     d[INDEX_DASH_PAL + 4]  = copperMove(normalDashboard ? color04 : color09,
                                         atariToOCS(normalDashboard ? 0x2C : 0x06));
-    d[INDEX_DASH_PAL + 5]  = normalDashboard ? copperMove(color08, atariToOCS(0x90)) : COPPER_NOP;
-    d[INDEX_DASH_PAL + 6]  = normalDashboard ? copperMove(color09, atariToOCS(0x90)) : COPPER_NOP;
+    d[INDEX_DASH_PAL + 5]  = normalDashboard ? copperMove(color14, atariToOCS(0x90)) : COPPER_NOP;
+    d[INDEX_DASH_PAL + 6]  = normalDashboard ? copperMove(color15, atariToOCS(0x90)) : COPPER_NOP;
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color01, atariToOCS(0x90));
     d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);
@@ -218,7 +218,7 @@ void DoorsCopperList::setSpritePostColor(uint16_t c)
 void DoorsCopperList::setEnergyIndicatorColor(uint16_t c)
 {
     data_[normalDashboard_ ? INDEX_GAUGE_BOT : INDEX_ENERGY_COL] =
-        copperMove(normalDashboard_ ? color08 : color21, c);
+        copperMove(normalDashboard_ ? color15 : color21, c);
 }
 
 void DoorsCopperList::setEnergyIndicatorTop(uint16_t line)

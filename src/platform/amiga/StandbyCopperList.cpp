@@ -164,8 +164,8 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     d[idx++] = copperMove(color03, atariToOCS(0x26)); // PF1 code 3: bit-7 COLPF3
     d[idx++] = copperMove(normalDashboard ? color04 : color09,
                           atariToOCS(normalDashboard ? 0x2C : 0x06));
-    d[idx++] = normalDashboard ? copperMove(color08, atariToOCS(0x90)) : copperMove(0x1FE, 0);
-    d[idx++] = normalDashboard ? copperMove(color09, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[idx++] = normalDashboard ? copperMove(color14, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[idx++] = normalDashboard ? copperMove(color15, atariToOCS(0x90)) : copperMove(0x1FE, 0);
     d[idx++] = copperWait(kCockpitLine + 10 - 1, 0xE0);  d[idx++] = copperMove(color01, atariToOCS(0x90));
     // Energy bar (sprite 2 / COLOR21) → black at the DIAL BOTTOM, not at the floor.  The Amiga bar
     // is one SOLID kEnergyRows sprite whose VSTART tracks the fuel (buildEnergyIndicatorSprite),
@@ -178,7 +178,7 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     energyEventIndex_ = idx;
     if (normalDashboard_) {
         d[idx++] = copperWait(energyTop_ - 1, 0xE0);
-        d[idx++] = copperMove(color08, energyColor_);
+        d[idx++] = copperMove(color15, energyColor_);
     } else {
         d[idx++] = copperWait(kGaugeBottomLine - 1, 0xE0);
         d[idx++] = copperMove(color21, 0x000);
@@ -217,7 +217,7 @@ void StandbyCopperList::setEnergyIndicatorColor(uint16_t c)
 {
     energyColor_ = c;
     if (normalDashboard_ && energyEventIndex_)
-        data_[energyEventIndex_ + 1] = copperMove(color08, c);
+        data_[energyEventIndex_ + 1] = copperMove(color15, c);
     else
         data_[INDEX_ENERGY_COL] = copperMove(color21, c);
 }

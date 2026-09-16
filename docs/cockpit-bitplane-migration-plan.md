@@ -528,17 +528,17 @@ layout is:
 
 | Pen | Faithful meaning |
 |---:|---|
-| 0 | Dark-grey background and transparent opening for sprites |
+| 0 | Dark-grey background |
 | 1 | Region background: divider black, dashboard blue, or floor black |
 | 2 | Light-grey bezel/stencil detail |
 | 3 | Bright salmon detail |
 | 4 | Dark red/bit-7 detail |
-| 8 | Energy gauge mask |
-| 9 | Shared altimeter mask; Copper transitions select terrain/ship colour with terrain foreground priority |
-| 10 | Reserved for enhanced cockpit artwork |
-| 5-7, 11-15 | Reserved for enhanced cockpit artwork |
+| 14 | Left altitude rectangle; Copper transitions select terrain/ship colour with terrain foreground priority |
+| 15 | Right energy rectangle |
+| 5-13 | Reserved for enhanced cockpit artwork |
 
-Using pens 8-10 for the gauges exercises plane 4 immediately and ensures the new path is tested
+Using pens 14-15 for the gauges makes them unambiguous in planar dumps, exercises all four planes,
+and ensures the new path is tested
 before enhanced graphics depend on it.
 
 The retained artificial-horizon, targeting-scope, and scanner sprites remain in front of the normal
@@ -577,22 +577,24 @@ detail plane and `initializeAHDetailPlanes()`.
 
 ### 3.4 Add gauge masks to the dashboard artwork
 
-Draw three full-height mask columns into the dashboard asset:
+Replace both complete 8x56 indicator rectangles in the dashboard asset with dedicated pens:
 
-- Energy level.
-- Altimeter terrain height.
-- Altimeter ship height.
+- Pen 14 for the left altitude indicator.
+- Pen 15 for the right energy indicator.
 
-Each mask uses its dedicated pen and exists only inside its 56-line dial opening. There must be no
-mask pixels below the dial. Consequently, the current fixed Copper blank at the dial bottom is no
-longer needed to hide a solid sprite's overhang.
+Every pixel in each rectangle uses its assigned pen; this deliberately replaces the old static
+source pixels in the openings. The rectangles exist only inside their 56-line dial openings, with
+no indicator pixels below them. Consequently, the current fixed Copper blank at the dial bottom is
+no longer needed to hide a solid sprite's overhang.
 
 ### 3.5 Convert gauge values to Copper transitions
 
-At the dashboard entry, initialize all three gauge pens to the inactive dial-background colour.
-For each gauge, convert its current value to the first visible fill scanline. At that scanline the
-Copper changes the gauge's color register to its active colour. Pixels above the transition remain
-indistinguishable from the empty dial; pixels at and below it display the filled bar.
+At the dashboard entry, initialize both indicator pens to the inactive dial-background colour.
+For each value, convert its current value to the first visible fill scanline. At that scanline the
+Copper changes the indicator's color register to its active colour. Pixels above the transition
+remain indistinguishable from the empty dial; pixels at and below it display the filled bar. The
+altitude pen may change twice—once for terrain height and once for ship height—to reproduce the two
+overlaid altitude components with their former priority.
 
 The transition calculation must reproduce the Atari strip's exact boundary, including:
 
@@ -653,7 +655,7 @@ The new playfield pens must continue to follow the original display parameters:
 - With Enhanced Graphics on, dual-playfield mode is absent from the dashboard in all cockpit
   Copper-list layouts.
 - With Enhanced Graphics off, the existing dual-playfield and gauge-sprite layout is unchanged.
-- Energy and both altimeter components use playfield pens, not sprites.
+- Energy uses pen 15 and both altimeter components share pen 14, not sprites.
 - Every reference gauge height matches the current version scanline-for-scanline.
 - Remaining dashboard sprites retain their intended clipping with explicit data/position bounds.
 - Pause, death, return, and relaunch palette behavior remains faithful.
@@ -833,7 +835,8 @@ Keep every step independently buildable and reviewable:
 12. Re-encode the enhanced dashboard for a normal four-plane pen contract.
 13. Keep remaining enhanced-dashboard sprites in front of the normal playfield and explicitly
     preserve their aperture clipping.
-14. Add the three gauge masks and Copper transition scheduler to the enhanced path.
+14. Add the two full indicator rectangles and three-event Copper transition scheduler to the
+    enhanced path.
 15. Remove the gauge sprites, chains, repoints, colors, and clipping workarounds from the enhanced
     path only.
 16. Run the complete toggle-off/toggle-on fidelity and performance matrix and update documentation.
@@ -866,9 +869,10 @@ The migration is complete when:
   bitplanes where intended.
 - With Enhanced Graphics on, cockpit source artwork and all dynamic cockpit patches are stored in
   native planar form and no cockpit character/tile-to-bitplane conversion runs at runtime.
-- With Enhanced Graphics on, the dashboard no longer uses dual-playfield mode; energy, altimeter
-  terrain, and altimeter ship are Copper-height-controlled playfield pens; and their three sprite
-  paths and associated chains/repoints are absent.
+- With Enhanced Graphics on, the dashboard no longer uses dual-playfield mode; energy uses
+  Copper-height-controlled playfield pen 15; altimeter terrain and ship share
+  Copper-height-controlled playfield pen 14; and their three former sprite paths and associated
+  chains/repoints are absent.
 - With Enhanced Graphics off, the original faithful cockpit implementation and appearance remain
   available and unaffected.
 - In both modes, the terrain viewport remains on its existing three-plane renderer.

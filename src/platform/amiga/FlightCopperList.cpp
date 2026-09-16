@@ -394,8 +394,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
     d[INDEX_COCKPIT_PAL + 4] = copperMove(normalDashboard_ ? color04 : color09,
                                           atariToOCS(normalDashboard_ ? 0x2C : 0x06));
-    d[INDEX_COCKPIT_PAL + 5] = normalDashboard_ ? copperMove(color08, atariToOCS(0x90)) : copperMove(0x1FE, 0);
-    d[INDEX_COCKPIT_PAL + 6] = normalDashboard_ ? copperMove(color09, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[INDEX_COCKPIT_PAL + 5] = normalDashboard_ ? copperMove(color14, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[INDEX_COCKPIT_PAL + 6] = normalDashboard_ ? copperMove(color15, atariToOCS(0x90)) : copperMove(0x1FE, 0);
 
     // AH ground-fill + baked detail colours, then dashboard sprite priority.  The faithful path
     // sandwiches sprites between PF2 and PF1.  A normal playfield has no such middle layer, so the
@@ -459,8 +459,8 @@ void FlightCopperList::setDashBg(uint16_t c)
 {
     data_[INDEX_DASH_BLUE] = copperMove(color01, c);
     if (normalDashboard_) {
-        data_[INDEX_COCKPIT_PAL + 5] = copperMove(color08, c);
-        data_[INDEX_COCKPIT_PAL + 6] = copperMove(color09, c);
+        data_[INDEX_COCKPIT_PAL + 5] = copperMove(color14, c);
+        data_[INDEX_COCKPIT_PAL + 6] = copperMove(color15, c);
     }
 }
 
@@ -471,9 +471,9 @@ void FlightCopperList::setGaugeTransitions(uint16_t energyTop, uint16_t energyCo
     if (!normalDashboard_) return;
 
     struct Event { uint16_t line, reg, color, order; } events[3] = {
-        { energyTop, color08, energyColor, 0 },
-        { terrainTop, color09, terrainColor, 1 },
-        { shipTop, color09, shipColor, 2 }
+        { energyTop, color15, energyColor, 0 },
+        { terrainTop, color14, terrainColor, 1 },
+        { shipTop, color14, shipColor, 2 }
     };
 
     // The terrain sprite was in front of the ship sprite.  If terrain starts first (or on the same

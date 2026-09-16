@@ -228,8 +228,8 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
     d[INDEX_COCKPIT_PAL + 4] = copperMove(normalDashboard ? color04 : color09,
                                           atariToOCS(normalDashboard ? 0x2C : 0x06));
-    d[INDEX_COCKPIT_PAL + 5] = normalDashboard ? copperMove(color08, atariToOCS(0x90)) : copperMove(0x1FE, 0);
-    d[INDEX_COCKPIT_PAL + 6] = normalDashboard ? copperMove(color09, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[INDEX_COCKPIT_PAL + 5] = normalDashboard ? copperMove(color14, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[INDEX_COCKPIT_PAL + 6] = normalDashboard ? copperMove(color15, atariToOCS(0x90)) : copperMove(0x1FE, 0);
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
     // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.
@@ -265,7 +265,7 @@ void PlanetCopperList::setEnergyIndicatorColor(uint16_t c)
 {
     // COLOR21 (sprite pair 2/3 pen 01) — poked BELOW the starfield, where channel 2 is the gauge.
     data_[normalDashboard_ ? INDEX_GAUGE_BOT : INDEX_GAUGE_COL] =
-        copperMove(normalDashboard_ ? color08 : color21, c);
+        copperMove(normalDashboard_ ? color15 : color21, c);
 }
 
 void PlanetCopperList::setEnergyIndicatorTop(uint16_t line)

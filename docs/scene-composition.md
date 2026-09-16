@@ -27,7 +27,8 @@ remains a normal three-plane region with its scene-specific edge colour.
 **Enhanced Graphics composition (2026-09-15):** every cockpit-bearing list uses four planes in the
 42-line top, returns to three planes for the live terrain viewport, and enables four again for the
 8-line windscreen band and 80-line dashboard. The dashboard is a normal single playfield with the
-old appearance re-encoded as pens 0-4. Pen 8 is the energy mask and pen 9 the shared altimeter mask;
+old appearance re-encoded as pens 0-4. The complete left altitude rectangle uses pen 14 and the
+complete right energy rectangle uses pen 15;
 their vertical colour changes are Copper events derived from the same fuel/height state as the old
 sprites. The artificial horizon, targeting-scope object, and scanner dot remain hardware sprites;
 Flight switches them in front of the normal playfield at the dashboard boundary, with the inactive
