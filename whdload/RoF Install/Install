@@ -210,11 +210,19 @@
         (dest #dest)
       )
 
-      (set #SF_prompt "Please select the 64 KB XEGS Rescue on Fractalus! cartridge image (rof.rom).")
+      (message
+        (cat
+          "This install needs the separate 65536-byte XEGS Rescue on Fractalus! "
+          "cartridge ROM. If you downloaded it as a ZIP archive, extract the .rom "
+          "file before continuing. The selected file will be copied to the game "
+          "drawer as \"rof.rom\"."
+        )
+      )
+      (set #SF_prompt "Select the extracted 65536-byte XEGS cartridge ROM. Its current filename may be different from rof.rom.")
       (set #SF_default_filename "rof.rom")
       (P_SelectFile)
       (if (= #SF_filename "")
-        (abort "Installation cancelled: rof.rom is required.")
+        (abort "Installation cancelled: the XEGS cartridge ROM is required.")
       )
       (copyfiles
         (help @copyfiles-help)
@@ -231,8 +239,8 @@
         (message
 	  (cat
 	    "\nThe Kickstart 1.3 image \"Devs:Kickstarts/kick34005.A500\" is not installed "
-	    "yet.\n\nThe game will not start until it is. See the ReadMe for how to get it "
-	    "and its matching .RTB relocation table."
+	    "yet.\n\nThe game will not start until it and \"kick34005.A500.RTB\" are in "
+	    "\"Devs:Kickstarts\". See the ReadMe for details."
 	  )
         )
       )

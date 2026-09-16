@@ -13,27 +13,42 @@
 
  Requirements:
  -------------
- This install requires WHDLoad version 16.0 or better to be in the path. It
- can be found in the WHDLoad package.
- The installer asks for a complete 65536-byte XEGS Rescue on Fractalus!
- cartridge image named rof.rom. The archive and executable contain no original
- game data. The Slave reads the required ranges from the installed ROM before
- starting the game.
+ This install requires WHDLoad version 16.0 or better and a PAL Amiga with at
+ least 2 MB of RAM. The installed program uses 384 KB ChipMem and 832 KB
+ OtherMem.
 
- The installed program requires 384 KB ChipMem and 832 KB OtherMem. PAL only.
+ The game also requires an A500 Kickstart 1.3 image named "kick34005.A500" in
+ "Devs:Kickstarts". It can be extracted from an A500 with GrabKick or a similar
+ tool. The matching relocation file "kick34005.A500.RTB", found in the Aminet
+ archive "util/boot/skick346.lha", must be placed in the same directory.
+
+
+ Installation:
+ -------------
+ The install does not include the original game data. Before running it,
+ download either of these matching XEGS cartridge images:
+
+ https://archive.org/download/a8b_cart_Rescue_on_Fractalus_1987_Atari_US/Rescue_on_Fractalus_1987_Atari_US.rom
+ https://www.atarimania.com/8bit/dumps/Rescue_on_Fractalus!_Atari_US.zip
+
+ If using the AtariMania download, extract "Rescue on Fractalus!.rom" from the
+ ZIP archive first. Run the Install icon and, when asked for the cartridge
+ image, select the downloaded or extracted ROM. Its original filename does not
+ matter: the installer copies it to the game drawer as "rof.rom".
+
+ The correct ROM is 65536 bytes and has SHA-256 checksum:
+ 1eb18e2a1ff31f43871a5e4e21e73f61b7659177d33d2cdbb29f36530b9f4d68
+
+ The Slave validates the ROM when the game starts and reads the required data
+ from it. If validation fails, check that the selected file is the 64 KB XEGS
+ cartridge ROM rather than another version of the game.
+
+
+ Quitting:
+ ---------
  It can be quit by pressing the left mouse button, immediately and without
  confirmation, at any point in the game. The WHDLoad QuitKey (F10, key can be
  changed with Tooltype "QuitKey=") works only on a 68010 or better.
-
- The game requires an installed A500 Kickstart 1.3 image.
- The kickstart image must be located in the directory "Devs:Kickstarts" and
- must be named "kick34005.A500". The image can be extracted from an A500 with
- tools like 'GrabKick' or similar which can be found on aminet.
- If the image is of wrong version or altered in any way WHDLoad will quit with
- an appropriate message.
- Additionally the file "kick34005.A500.RTB" must be installed in the same
- directory as the kickstart image. It can be found in the archive
- "util/boot/skick346.lha" on aminet.
 
 
  Features:
