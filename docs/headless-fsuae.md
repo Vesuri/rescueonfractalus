@@ -17,8 +17,14 @@ where static reasoning kept failing — **measure, don't theorize.**
   `amiga/.run/gdb-out.log` (also echoes a filtered tail). Edit `diag_timing.gdb` to print
   whatever globals/`mem[0xNNNN]` you need (a `while $i < N ... end` loop dumps arrays).
   `-g` is always on (CORE_CFLAGS), so all globals are readable by name.
-- **Build with probes:** `cd amiga && make clean && make -j4 PROBES=1` (→ `-DROF_FLIGHT_PROBE
-  -DROF_TDRAW_PROF`); the `make clean` is mandatory (see the stale-build ⚠ below).
+- **⚠ Every headless build now needs a DATA SOURCE.** Since the game data was externalised to
+  `rof.rom` (the default build has data in BSS and only WHDLoad fills it), a plain `make -j4 PROBES=1`
+  boots to a blank/broken screen and never reaches flight. **Add `STANDALONE_DATA=1 ROM=../rof.rom`
+  to every headless recipe** (`diag_run.sh`, `fps_seg`, `prof_flight.sh`, any `VERIFY`/probe run) —
+  it embeds the extracted package the same way `make standalone` does, so `out/RoF` runs on its own
+  under the gdb stub. `../rof.rom` is the 64 KB XEGS cartridge in the repo root (git-ignored).
+- **Build with probes:** `cd amiga && make clean && make -j4 PROBES=1 STANDALONE_DATA=1 ROM=../rof.rom`
+  (→ `-DROF_FLIGHT_PROBE -DROF_TDRAW_PROF`); the `make clean` is mandatory (see the stale-build ⚠ below).
   This is OFF by default — the probes + auto-launch + timing accumulators are now PERMANENT,
   guarded code (committed), not throwaway edits. With probes off, the SDL build + `make validate`
   link cleanly. ⚠ `diag_run.sh`/`diag_sample.sh` need an `out/RoF` built with `PROBES=1`.

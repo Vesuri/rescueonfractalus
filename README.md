@@ -39,6 +39,32 @@ RoF
 The generated data package is ignored by Git and is included only in this explicitly requested
 standalone build.
 
+### The `rof.rom` cartridge image
+
+This project ships **no** original game data. You must supply your own copy of the game's
+**v5.0 Atari XEGS cartridge** — the 65,536-byte ROM dump. The build verifies it before use, so
+only the exact image below will work:
+
+| | |
+|---|---|
+| Size | 65,536 bytes |
+| CRC32 | `1ca549ad` |
+| MD5 | `8dd03c7615da801094d5e0b720387e8b` |
+| SHA-1 | `36bc00b2e4452855d0681c50cdec2403ffb2a6bb` |
+| SHA-256 | `1eb18e2a1ff31f43871a5e4e21e73f61b7659177d33d2cdbb29f36530b9f4d68` |
+
+The image is legally yours to make only if you own the cartridge. The correct dump is the one
+cataloged as the *Rescue on Fractalus!* XEGS cartridge in the **No-Intro** "Atari - 8-bit
+Family" set (also present in **TOSEC**); dump it yourself from your cartridge, or identify the
+matching file by the checksums above. Verify what you have before building:
+
+```sh
+shasum -a 256 rof.rom   # must print 1eb18e2a...4d68
+```
+
+This repository does not distribute the ROM or point to any specific download; obtaining it is
+your responsibility and subject to the copyright of the original work.
+
 On an emulator, point a hard drive at the folder containing `RoF` and run it from there.
 
 ### WHDLoad

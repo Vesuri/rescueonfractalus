@@ -78,10 +78,16 @@ the snapshot". Rationale + the caveat in full: the `hostproof` block in `Makefil
 ### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
 ```
 . env.sh        # put the ~/.local Amiga toolchain on PATH (source it first, SAME command)
-make            # build out/RoF (+ RoF.elf for debug)
+make            # build out/RoF — DATA-LESS (BSS): boots blank, only usable via WHDLoad
+make standalone ROM=../rof.rom   # runnable out/RoF with the game data embedded (Workbench/Shell/emu)
 ./run.sh        # boot in FS-UAE (Kickstart 3.1; left mouse button quits)
 ./debug.sh      # source-level debug via FS-UAE GDB stub (m68k-amiga-elf-gdb; prints its $DEBUG_PORT)
 ```
+⚠ **Game data was externalised to `rof.rom` — a plain `make` embeds NO data and boots to a blank
+screen.** To run/debug/measure `out/RoF` directly (Workbench, `run.sh`, `debug.sh`, `diag_run.sh`),
+add `STANDALONE_DATA=1 ROM=../rof.rom` to the build (that is what `make standalone` does), or install
+via WHDLoad. `../rof.rom` = the 64 KB XEGS cartridge in the repo root (git-ignored; checksums in
+`README.md`). Any headless recipe below needs it too — see `docs/headless-fsuae.md`.
 **Never `pkill fs-uae` / `pkill gdb`** in these scripts or by hand: several Amiga projects run
 their own emulator at the same time.  The run/debug/probe scripts source
 `~/.local/share/amiga/fsuae_common.sh` (shared, outside every repo; `$FSUAE_COMMON` overrides the
@@ -181,8 +187,10 @@ absolute. The A500 is a 7 MHz 68000 — spending 10 ms on *anything* is half the
 conscious of absolute milliseconds in any NEW code you add. Surface numbers honestly.
 
 Three rules that must survive without opening the doc:
-- **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 400` is the ONLY way to quote a
-  framerate** (400 s: 200 no longer reaches the last segment), and it over-reads wins — under ~3% is noise. Quote a static cycle count or a
+- **`make FPSCOUNT=1 STANDALONE_DATA=1 ROM=../rof.rom` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 400`
+  is the ONLY way to quote a framerate** (the `STANDALONE_DATA` half is now mandatory — a data-less
+  build never reaches flight; 400 s: 200 no longer reaches the last segment), and it over-reads
+  wins — under ~3% is noise. Quote a static cycle count or a
   differential ratio as the win; quote FPS only as the standing baseline. ⚠ **`phase_budget.gdb`'s
   t/it rows are NOT a safer alternative — they carry ~±10% of trajectory noise and must never be
   diffed across builds** (`docs/flight-perf-log.md` §19: a change that cannot touch flight code
