@@ -121,10 +121,16 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		dc.b	"not affiliated with or endorsed by Lucasfilm.",-1
 		dc.b	"Left mouse button quits.",10
 		dc.b	"F10 also quits, on a 68010 or better.",0
+; Enhanced Graphics is opt-in at build time (basm -dROF_ENHANCED_GRAPHICS=1, via
+; `make ENHANCED_GRAPHICS=1`).  A default slave omits the enhanced logo/games
+; artwork, its logo hook and the Custom4 patch, so it must not advertise Custom4.
 slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);"
 		dc.b	"C2:B:Enhanced Terrain Rendering;"
 		dc.b	"C3:B:Enhanced Palette;"
-		dc.b	"C4:B:Enhanced Graphics;",0
+	IFD ROF_ENHANCED_GRAPHICS
+		dc.b	"C4:B:Enhanced Graphics;"
+	ENDC
+		dc.b	0
 		dc.b	"$VER: RoF.slave 1.0 (13.09.2026)",0
 	EVEN
 
@@ -186,8 +192,10 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 	;optionally select enhanced colour resolution for identified palette fades
 	bsr	_patch_enhanced_palette
 
+	IFD ROF_ENHANCED_GRAPHICS
 	;Custom4 selects every enhanced-graphics feature, including the cockpit path
 	bsr	_patch_enhanced_graphics
+	ENDC
 
 	;call it.  D0/A0 = argument line, as dos would pass them; the game's CRT
 	;ignores both (its main() takes no arguments).
@@ -382,8 +390,10 @@ _patch_hooks	movem.l	d2-d3,-(a7)
 		move.l	a1,(hook_Save-4,a0)
 		lea	(_hook_load,pc),a1
 		move.l	a1,(hook_Load-4,a0)
+	IFD ROF_ENHANCED_GRAPHICS
 		lea	(_hook_logo,pc),a1
 		move.l	a1,(hook_Logo-4,a0)
+	ENDC
 .done		movem.l	(a7)+,d2-d3
 		rts
 
@@ -452,6 +462,7 @@ _patch_enhanced_palette
 		movem.l	(a7)+,d2-d5
 .done		rts
 
+	IFD ROF_ENHANCED_GRAPHICS
 egrf_MAGIC0	= $526f4621		;'RoF!'
 egrf_MAGIC1	= $45475246		;'EGRF'
 egrf_DEFAULT	= 0
@@ -469,6 +480,7 @@ _patch_enhanced_graphics
 		bsr.s	_patch_config_word
 		movem.l	(a7)+,d2-d5
 .done		rts
+	ENDC
 
 ; D2/D3 = block magic, D4 = expected word, D5 = replacement word.
 _patch_config_word
@@ -526,8 +538,10 @@ _rof_custom1	dc.l	0
 _rof_custom2	dc.l	0
 		dc.l	WHDLTAG_CUSTOM3_GET
 _rof_custom3	dc.l	0
+	IFD ROF_ENHANCED_GRAPHICS
 		dc.l	WHDLTAG_CUSTOM4_GET
 _rof_custom4	dc.l	0
+	ENDC
 		dc.l	TAG_DONE
 
 ; int _hook_save(const UBYTE *blk, ULONG len)      4(sp)=blk  8(sp)=len
@@ -579,6 +593,10 @@ _hook_load	movem.l	d2/a2,-(a7)
 ; field and palette is null.  Overlay it in place and return logo_USE_BITMAP to keep
 ; the game from applying its original GAMES update.  Returning zero at either phase
 ; selects that phase's original path.
+;
+; Built only for ENHANCED_GRAPHICS: without it neither the trampoline nor the artwork
+; below is assembled, and _patch_hooks leaves the game's logo hook pointer at 0.
+	IFD ROF_ENHANCED_GRAPHICS
 _hook_logo	lea	(_rof_custom4,pc),a0
 		tst.l	(a0)
 		beq.s	.decline
@@ -654,6 +672,7 @@ _enhanced_games
 	INCBIN	"assets/enhanced_games.bin"
 _enhanced_palette
 	INCBIN	"assets/enhanced_logo.pal"
+	ENDC
 
 ;============================================================================
 

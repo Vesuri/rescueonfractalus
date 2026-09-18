@@ -10,7 +10,10 @@
 #              whdmacros.i) and lvo/dos.i
 #   Sources:   WHDLoad's Src/sources drawer (so whdload/kick13.s resolves)
 #
-#   make                  -> RoF.slave        the release slave
+#   make                  -> RoF.slave        the release slave (no Enhanced Graphics)
+#   make ENHANCED_GRAPHICS=1                  bundle the enhanced logo/games artwork
+#                                             and offer the Custom4 Enhanced Graphics
+#                                             toggle; plain `make` leaves them out
 #   make RoFTune.slave    -> RoFTune.slave    same, plus DEBUG and MEMFREE, for
 #                                             re-tuning CHIPMEMSIZE/FASTMEMSIZE
 #   make clean
@@ -30,15 +33,25 @@ SLAVE_SOURCE = $(BASENAME)Slave.s
 COMMON_OPTS = -ws-
 SLAVE_OPTS  = -O+ -OG+ -ODd- -ODe- -w4- -wo- $(COMMON_OPTS)
 
+# Enhanced Graphics is opt-in at build time: `make ENHANCED_GRAPHICS=1` defines
+# ROF_ENHANCED_GRAPHICS so the slave bundles the enhanced artwork and the Custom4
+# hook.  A plain `make` assembles none of it and the enhanced_logo assets below are
+# not even a prerequisite.
+ifneq ($(ENHANCED_GRAPHICS),)
+EG_DEF      = -dROF_ENHANCED_GRAPHICS=1
+LOGO_ASSETS = assets/enhanced_logo.bin assets/enhanced_games.bin assets/enhanced_logo.pal
+else
+EG_DEF      =
+LOGO_ASSETS =
+endif
+
 all : $(SLAVE)
 
-LOGO_ASSETS = assets/enhanced_logo.bin assets/enhanced_games.bin assets/enhanced_logo.pal
-
 $(SLAVE) : $(SLAVE_SOURCE) rof_data_layout.i $(LOGO_ASSETS)
-	basm $(SLAVE_OPTS) -o$(SLAVE) $(SLAVE_SOURCE)
+	basm $(SLAVE_OPTS) $(EG_DEF) -o$(SLAVE) $(SLAVE_SOURCE)
 
 $(TUNE_SLAVE) : $(SLAVE_SOURCE) rof_data_layout.i $(LOGO_ASSETS)
-	basm $(SLAVE_OPTS) -dTUNE=1 -o$(TUNE_SLAVE) $(SLAVE_SOURCE)
+	basm $(SLAVE_OPTS) $(EG_DEF) -dTUNE=1 -o$(TUNE_SLAVE) $(SLAVE_SOURCE)
 
 clean:
 	delete $(SLAVE) $(TUNE_SLAVE)
