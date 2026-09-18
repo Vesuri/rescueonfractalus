@@ -4645,15 +4645,27 @@ ROF_PLOTRUN_INLINE void rof_plotrun_cells(rof_plotrun* rc, const rof_figcol* tab
     uint8_t* const figP1 = rc->figP1;
     uint8_t* const figP2 = rc->figP2;
     const int figRow = rc->figRow;
+    /* Physical rows per source row: 1 in faithful mode (the copper doubles the viewport) or 2 in
+     * enhanced 1x1 mode (no copper doubling — the figure's second physical row is painted here, or
+     * it drops out on every other row).  Row-invariant for the whole draw, so hoist it once; the
+     * dy>=1 loop is empty when yScale==1, leaving the faithful path byte-identical.  Same stride
+     * pair (mask 40 / interleaved planes 80) and rowHi extension as rof_plotrun_flush. */
+    const int yScale = g_flightTerrainYScale;
     int     accB  = -1;
     int     rowLo = rc->rowLo, rowHi = rc->rowHi, colLo = rc->colLo, colHi = rc->colHi;
     uint8_t accP1 = 0, accP2 = 0;
 #define ROF_FIG_FLUSH() do { if (accB >= 0) { \
-        figM[accB] |= (uint8_t)(accP1 | accP2); \
+        const uint8_t _mB = (uint8_t)(accP1 | accP2); \
+        figM[accB] |= _mB; \
         if (accP1) figP1[accB] |= accP1; \
         if (accP2) figP2[accB] |= accP2; \
+        for (int _dy = 1; _dy < yScale; ++_dy) { \
+            figM[accB + _dy * 40] |= _mB; \
+            if (accP1) figP1[accB + _dy * 80] |= accP1; \
+            if (accP2) figP2[accB + _dy * 80] |= accP2; \
+        } \
         if (figRow < rowLo) rowLo = figRow; \
-        if (figRow > rowHi) rowHi = figRow; \
+        if (figRow + yScale - 1 > rowHi) rowHi = figRow + yScale - 1; \
         if (accB < colLo) colLo = accB; \
         if (accB > colHi) colHi = accB; \
     } } while (0)
