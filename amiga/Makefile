@@ -967,6 +967,15 @@ ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)
 ifneq ($(strip $(ENHANCED_GRAPHICS)$(ENHANCED_LOGO)),)
 ASFLAGS   += --defsym ROF_ENHANCED_LOGO=1 --defsym ROF_ENHANCED_GRAPHICS=1
 endif
+# `make ENHANCED_TERRAIN=1` / `make ENHANCED_PALETTE=1`: pre-set the matching retained
+# StartupConfig.s word to 1 (native-resolution terrain / enhanced fades) instead of relying
+# on a loader to patch it.  Independent of ENHANCED_GRAPHICS.
+ifneq ($(strip $(ENHANCED_TERRAIN)),)
+ASFLAGS   += --defsym ROF_ENHANCED_TERRAIN=1
+endif
+ifneq ($(strip $(ENHANCED_PALETTE)),)
+ASFLAGS   += --defsym ROF_ENHANCED_PALETTE=1
+endif
 # `make standalone ROM=/path/rof.rom` embeds the extracted user-owned data package.
 ifdef STANDALONE_DATA
 ASFLAGS   += --defsym ROF_STANDALONE_DATA=1

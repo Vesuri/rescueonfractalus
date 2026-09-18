@@ -23,7 +23,11 @@ rof_bplcon3_value:
 	.long 0x54455252		| 'TERR'
 	.globl rof_enhanced_terrain_value
 rof_enhanced_terrain_value:
-	.word 0			| 0 = original 2x2, nonzero = enhanced native rendering
+.ifdef ROF_ENHANCED_TERRAIN
+	.word 1			| enhanced native-resolution terrain build
+.else
+	.word 0			| 0 = original 2x2 unless a loader patches this word
+.endif
 	.word 0			| keep the retained block longword-sized
 
 | Startup-selected palette interpretation.  The renderer snapshots this during
@@ -34,7 +38,11 @@ rof_enhanced_terrain_value:
 	.long 0x4550414c		| 'EPAL'
 	.globl rof_enhanced_palette_value
 rof_enhanced_palette_value:
-	.word 0			| 0 = faithful Atari colour resolution, nonzero = enhanced fades
+.ifdef ROF_ENHANCED_PALETTE
+	.word 1			| enhanced-fades build
+.else
+	.word 0			| 0 = faithful Atari colour resolution unless a loader patches this word
+.endif
 	.word 0			| keep the retained block longword-sized
 
 | Startup-selected enhanced artwork/rendering path. WHDLoad Custom4 patches this together with
