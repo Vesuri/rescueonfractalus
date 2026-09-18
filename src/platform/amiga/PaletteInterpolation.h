@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../cpu/m68k_math.h"   // rof_mulu16 — 16x16 hardware multiply (no __mulsi3)
+
 // $08A2 advances once per wrap of the descending 8-bit $08A1 timer, while
 // (phase >> 2) selects one atmosphere-table state.  Return sixteen evenly
 // spaced positions through that four-wrap interval.  Countdown zero is the
@@ -32,9 +34,11 @@ static inline uint8_t atmosphereAltitudeBlendStep(uint8_t depthStep, uint8_t dep
 
 static inline uint8_t lerpOCSNibble(uint8_t from, uint8_t to, uint8_t step)
 {
+    // rof_mulu16 forces MULU.W: both factors are nibble deltas (<16), so the promoted
+    // int `*` would otherwise lower to a 32-bit software __mulsi3 on the 68000.
     if (to >= from)
-        return (uint8_t)(from + (((uint16_t)(to - from) * step + 8u) >> 4));
-    return (uint8_t)(from - (((uint16_t)(from - to) * step + 8u) >> 4));
+        return (uint8_t)(from + ((rof_mulu16((uint16_t)(to - from), step) + 8u) >> 4));
+    return (uint8_t)(from - ((rof_mulu16((uint16_t)(from - to), step) + 8u) >> 4));
 }
 
 // Interpolate the three independent OCS RGB nibbles.  step is a sixteenth:
