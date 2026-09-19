@@ -296,12 +296,18 @@ _load_game_data
 		and.w	#$f,d2
 		lsl.w	#2,d2
 		lsr.l	#4,d1
-		eor.l	(_crc_table,pc,d2.w),d1
+		lea	(_crc_table,pc),a4	;68000 has no EOR mem-src and no proven
+		adda.w	d2,a4			;indexed mode here: build the entry address
+		move.l	(a4),d3			;then EOR register into the running CRC
+		eor.l	d3,d1
 		move.l	d1,d2
 		and.w	#$f,d2
 		lsl.w	#2,d2
 		lsr.l	#4,d1
-		eor.l	(_crc_table,pc,d2.w),d1
+		lea	(_crc_table,pc),a4	;68000 has no EOR mem-src and no proven
+		adda.w	d2,a4			;indexed mode here: build the entry address
+		move.l	(a4),d3			;then EOR register into the running CRC
+		eor.l	d3,d1
 		subq.l	#1,d0
 		bne.s	.crcbyte
 		not.l	d1
@@ -381,9 +387,9 @@ _patch_hooks	movem.l	d2-d3,-(a7)
 		bne.s	.scan			;the field offsets below are all -4
 		cmp.l	(a0),d3			;magic1
 		bne.s	.scan
-		cmp.w	#hook_VERSION,(4,a0)	;a layout we know how to write?
+		cmp.w	#hook_VERSION,4(a0)	;a layout we know how to write?
 		bne.s	.scan
-		cmp.w	#hook_SIZEOF,(6,a0)
+		cmp.w	#hook_SIZEOF,6(a0)
 		blo.s	.scan
 
 		lea	(_hook_save,pc),a1
@@ -603,24 +609,24 @@ _hook_logo	lea	(_rof_custom4,pc),a0
 		move.l	(4,a7),a0		;context
 		cmp.w	#2,(a0)		;context version
 		bne.s	.decline
-		cmp.w	#40,(2,a0)		;minimum context size
+		cmp.w	#40,2(a0)		;minimum context size
 		blo.s	.decline
-		cmp.w	#1,(26,a0)		;4-plane interleaved format
+		cmp.w	#1,26(a0)		;4-plane interleaved format
 		bne.s	.decline
-		cmp.w	#320,(12,a0)
+		cmp.w	#320,12(a0)
 		bne.s	.decline
-		cmp.w	#340,(14,a0)
+		cmp.w	#340,14(a0)
 		bne.s	.decline
-		cmp.w	#4,(16,a0)
+		cmp.w	#4,16(a0)
 		bne.s	.decline
-		cmp.w	#40,(18,a0)
+		cmp.w	#40,18(a0)
 		bne.s	.decline
-		cmp.w	#160,(20,a0)
+		cmp.w	#160,20(a0)
 		bne.s	.decline
 
-		cmp.w	#1,(36,a0)		;INITIAL?
+		cmp.w	#1,36(a0)		;INITIAL?
 		beq.s	.initial
-		cmp.w	#2,(36,a0)		;GAMES?
+		cmp.w	#2,36(a0)		;GAMES?
 		bne.s	.decline
 
 		;30 rows x 4 planes x 11 bytes.  The source rectangle is image
@@ -638,7 +644,7 @@ _hook_logo	lea	(_rof_custom4,pc),a0
 		moveq	#logo_USE_BITMAP,d0
 		rts
 
-.initial	cmp.l	#16000,(8,a0)		;100 complete 160-byte rows
+.initial	cmp.l	#16000,8(a0)		;100 complete 160-byte rows
 		blo.s	.decline
 		move.l	a0,d1			;keep context in caller-saved D1
 		move.l	(4,a0),a1
@@ -650,15 +656,15 @@ _hook_logo	lea	(_rof_custom4,pc),a0
 		move.l	(28,a0),a1		;palette destination
 		tst.l	a1
 		beq.s	.decline
-		cmp.w	#16,(32,a0)
+		cmp.w	#16,32(a0)
 		blo.s	.decline
 		lea	(_enhanced_palette,pc),a0
 		moveq	#15,d0
 .pal_copy	move.w	(a0)+,(a1)+
 		dbf	d0,.pal_copy
 		move.l	d1,a0
-		move.w	#100,(22,a0)		;native image height
-		move.w	#58,(24,a0)		;vertically centred in 216 lines
+		move.w	#100,22(a0)		;native image height
+		move.w	#58,24(a0)		;vertically centred in 216 lines
 		moveq	#logo_USE_BITMAP|logo_USE_PALETTE|logo_USE_GEOMETRY,d0
 		rts
 
