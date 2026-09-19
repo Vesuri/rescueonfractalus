@@ -56,8 +56,11 @@ atari_charset:
 	.incbin "assets/atari_charset.bin"
 atari_charset_end:
 
-| Faithful cockpit lookup atlas, generated at startup from the cartridge-provided glyphs.
-| It is always BSS: no original or derived game graphics live in the executable.
+| Enhanced Graphics cockpit lookup atlas, generated at startup from the cartridge-provided
+| glyphs (buildCockpitPlanarAsset).  Read only by the enhanced *Planar cockpit renderers, so a
+| default build — where g_enhancedGraphics is a compile-time 0 and those readers are collected —
+| omits it entirely.  It is always BSS: no original or derived game graphics live in the executable.
+.ifdef ROF_ENHANCED_GRAPHICS
 	.section .bss
 	.balign 4
 	.global rof_cockpit_planar
@@ -65,6 +68,7 @@ atari_charset_end:
 rof_cockpit_planar:
 	.space 17952
 rof_cockpit_planar_end:
+.endif
 
 | Optional standalone-build copy of the WHDLoad enhanced logo assets.  The normal
 | executable does not carry these: the slave owns them and supplies them through the

@@ -73,7 +73,9 @@ extern "C" { volatile unsigned char g_restartHoldBlack = 0; }
 extern "C" {
 int g_flightEnhancedTerrain = 0;
 int g_enhancedPalette = 0;
-int g_enhancedGraphics = 0;
+#ifdef ROF_ENHANCED_GRAPHICS
+int g_enhancedGraphics = 0;   // snapshotted from the retained word in initialize()
+#endif
 int g_flightTerrainYScale = 1;
 int g_flightTerrainYShift = 0;
 int g_flightPhysicalTerrainRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS;
@@ -2642,11 +2644,16 @@ extern "C" { volatile uint32_t g_figBmpAddr = 0, g_cleanBmpAddr = 0, g_maskBmpAd
 #endif
 void RescueOnFractalus::initialize()
 {
-    buildCockpitPlanarAsset();
     g_flightEnhancedTerrain =
         configuredFlightTerrainRenderer() == kFlightTerrainEnhanced;
     g_enhancedPalette = configuredEnhancedPalette();
+#ifdef ROF_ENHANCED_GRAPHICS
     g_enhancedGraphics = configuredEnhancedGraphics();
+#endif
+    // Enhanced-only planar cockpit atlas.  In a default build g_enhancedGraphics is a compile-time
+    // 0, so this call (and buildCockpitPlanarAsset itself, and the rof_cockpit_planar BSS it writes)
+    // is dead-code-eliminated and collected by --gc-sections.
+    if (g_enhancedGraphics) buildCockpitPlanarAsset();
     g_flightTerrainYShift = g_flightEnhancedTerrain ? 1 : 0;
     g_flightTerrainYScale = 1 << g_flightTerrainYShift;
     g_flightPhysicalTerrainRows = ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_SOURCE_TERRAIN_ROWS);
