@@ -29,5 +29,5 @@
 | check in docs/headless-fsuae.md both rely on identical input giving identical output.
 	.section .rodata.version,"aR"
 	.balign 2
-	.asciz "$VER: Rescue on Fractalus! 1.0 (13.09.2026)"
+	.asciz "$VER: Rescue on Fractalus! 1.1 (20.09.2026)"
 	.balign 2
