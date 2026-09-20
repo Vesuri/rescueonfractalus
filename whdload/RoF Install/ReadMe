@@ -73,6 +73,12 @@
 
  History:
  --------
+ version 1.1 (20.09.2026):
+ - optional native-resolution flight terrain (see Features)
+ - optional enhanced palette for smoother fades and time-of-day changes (see
+   Features)
+ - the game data now loads from your own XEGS cartridge ROM (see Installation)
+
  version 1.0 (13.09.2026):
  - optional blanked screen borders on ECS and AGA systems (see Features)
  - fixed the cockpit jumping sideways for a frame while the level number
