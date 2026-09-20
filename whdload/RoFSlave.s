@@ -266,6 +266,10 @@ _load_game_data
 		bne	.bad
 		move.l	16(a3),a5		;package BSS destination
 
+	;A 68000 (d16,An) displacement is 16-bit SIGNED, but the package offsets run to
+	;$870c -- past $7fff, so `lea data_PACKn_OFFSET(a5),a1` silently wraps to a negative
+	;displacement (basm truncates without a warning) and ROM2 lands 30 KB before the
+	;buffer.  Build every destination with adda.l, which takes a full 32-bit immediate.
 		lea	(_romfile,pc),a0
 		move.l	a5,a1
 		move.l	#data_ROM0_SIZE,d0
@@ -273,13 +277,15 @@ _load_game_data
 		jsr	(resload_LoadFileOffset,a2)
 
 		lea	(_romfile,pc),a0
-		lea	data_PACK1_OFFSET(a5),a1
+		move.l	a5,a1
+		adda.l	#data_PACK1_OFFSET,a1
 		move.l	#data_ROM1_SIZE,d0
 		move.l	#data_ROM1_OFFSET,d1
 		jsr	(resload_LoadFileOffset,a2)
 
 		lea	(_romfile,pc),a0
-		lea	data_PACK2_OFFSET(a5),a1
+		move.l	a5,a1
+		adda.l	#data_PACK2_OFFSET,a1
 		move.l	#data_ROM2_SIZE,d0
 		move.l	#data_ROM2_OFFSET,d1
 		jsr	(resload_LoadFileOffset,a2)
