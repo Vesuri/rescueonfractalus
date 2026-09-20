@@ -40,18 +40,6 @@ mkdir -p "$DIST/$PKG"
 cp -p "$PKG"/* "$DIST/$PKG/"
 cp -p "$PKG.info" "$DIST/"
 
-# The ReadMe keeps the Enhanced Graphics (Custom4) paragraph inside
-# @@ENHANCED_GRAPHICS markers.  Custom4 is a build-time option the default slave
-# omits, so drop that block unless ENHANCED_GRAPHICS=1 selects an enhanced
-# release; the markers themselves never ship either way.  (Portable sed: no -i.)
-README="$DIST/$PKG/ReadMe"
-if [ -n "${ENHANCED_GRAPHICS:-}" ]; then
-  sed -e '/^@@ENHANCED_GRAPHICS_BEGIN$/d' -e '/^@@ENHANCED_GRAPHICS_END$/d' "$README" > "$README.tmp"
-else
-  sed '/^@@ENHANCED_GRAPHICS_BEGIN$/,/^@@ENHANCED_GRAPHICS_END$/d' "$README" > "$README.tmp"
-fi
-mv "$README.tmp" "$README"
-
 # ...plus the two build artifacts.  The Install script copies "RoF" into <dest>/data,
 # which is what the slave's ws_CurrentDir points at.
 cp -p "$EXE"   "$DIST/$PKG/RoF"
