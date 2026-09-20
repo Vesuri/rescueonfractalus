@@ -220,9 +220,28 @@
       )
       (set #SF_prompt "Select the extracted 65536-byte XEGS cartridge ROM. Its current filename may be different from rof.rom.")
       (set #SF_default_filename "rof.rom")
-      (P_SelectFile)
-      (if (= #SF_filename "")
-        (abort "Installation cancelled: the XEGS cartridge ROM is required.")
+      ;A complete XEGS cartridge is exactly 65536 bytes.  Re-ask until the
+      ;selected file is that size: it catches the common mistakes (an
+      ;un-extracted ZIP, a truncated download, the wrong file entirely) while
+      ;the user is still here to pick again.  The slave additionally CRC32-checks
+      ;the contents at load time, so this size gate need not verify the bytes.
+      (set #ROM_valid 0)
+      (while (= #ROM_valid 0)
+        (P_SelectFile)
+        (if (= #SF_filename "")
+          (abort "Installation cancelled: the XEGS cartridge ROM is required.")
+        )
+        (if (= (getsize #SF_filename) 65536)
+          (set #ROM_valid 1)
+          (set #SF_prompt
+            (cat
+              ("The selected file is %ld bytes, not the required 65536.\n\n" (getsize #SF_filename))
+              "That is not a complete XEGS cartridge ROM - an un-extracted ZIP "
+              "archive, a truncated download, or the wrong file is the usual "
+              "cause.\n\nPlease select the extracted 65536-byte cartridge ROM."
+            )
+          )
+        )
       )
       (copyfiles
         (help @copyfiles-help)
