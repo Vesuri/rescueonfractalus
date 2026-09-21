@@ -1179,8 +1179,19 @@ static void decodePostRLE(const uint8_t* tbl, uint16_t* dst)
         uint8_t count = *tbl++;
         if (count == 0) break;                 // terminator
         uint16_t doubled = kDoubleGlyph[*tbl++];
+        uint16_t halfStep = doubled;
+        if (g_enhancedGraphics && tbl[0] != 0) {
+            const uint16_t next = kDoubleGlyph[tbl[1]];
+            // The authored pillar moves one Atari player bit (two Amiga pixels) at each RLE
+            // boundary.  Enhanced Graphics inserts the missing one-pixel position halfway
+            // through the run, retaining the same thickness, endpoints and total height.
+            if (next == (uint16_t)(doubled >> 2)) halfStep = (uint16_t)(doubled >> 1);
+            else if (next == (uint16_t)(doubled << 2)) halfStep = (uint16_t)(doubled << 1);
+        }
+        const uint8_t split = (uint8_t)((count + 1u) >> 1);
         for (uint8_t k = 0; k < count && row < kHT; k++, row++) {
-            dst[row * 2] = doubled; dst[row * 2 + 1] = 0x0000;
+            dst[row * 2] = (g_enhancedGraphics && k >= split) ? halfStep : doubled;
+            dst[row * 2 + 1] = 0x0000;
         }
     }
     for (; row < kHT; row++) { dst[row * 2] = 0x0000; dst[row * 2 + 1] = 0x0000; }
