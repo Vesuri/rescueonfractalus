@@ -6635,7 +6635,14 @@ void RescueOnFractalus::buildLogoSparkle()
     spriteCtl(d, pmX(h), pmLine(first), (uint16_t)rows);
     const volatile uint8_t* src = mem + kLogoPmP0 + first;
     uint16_t* px = d + 2;
-    for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
+    for (unsigned r = 0; r < rows; r++) {
+        const uint8_t bits = *src++;
+        // Faithful mode keeps the Atari colour-clock width (each source bit is two Amiga
+        // pixels).  Enhanced Graphics uses the source bits as true 1x1 pixels, centred in the
+        // same 16-pixel hardware-sprite word so the sparkle does not move as it becomes finer.
+        *px++ = g_enhancedGraphics ? (uint16_t)((uint16_t)bits << 4) : kDoubleGlyph[bits];
+        *px++ = 0;
+    }
     for (unsigned r = rows; r < kLogoSparkleRows; r++) { *px++ = 0; *px++ = 0; }
 }
 
