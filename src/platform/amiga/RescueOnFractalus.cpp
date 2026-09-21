@@ -1448,6 +1448,13 @@ static inline uint16_t enhancedAssetRow(const EnhancedSpriteAsset* asset, int ro
     return sourceRow < asset->height ? asset->rows[sourceRow] : 0;
 }
 
+static inline uint16_t enhancedObjectRow(const EnhancedSpriteAsset* asset, bool saucer,
+                                         const volatile uint8_t* source, int row, int scale)
+{
+    if (asset) return enhancedAssetRow(asset, row, scale);
+    return saucer ? kEnhancedSaucerRow[source[row]] : s_shotExpand[source[row]];
+}
+
 static const EnhancedSpriteAsset* enhancedShotAsset(int rows, int scale)
 {
     // $0036 bit 7 is the impact/explosion state. $2867 is the exact frame copied into the
@@ -1576,6 +1583,8 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
                                         int base, int rows, int scale, uint16_t x, uint8_t owner)
 {
     const EnhancedSpriteAsset* asset = (owner == kWideShot) ? enhancedShotAsset(rows, scale) : nullptr;
+    const bool saucerAsset = g_enhancedGraphics && owner == kWideP3;
+    const bool enhancedAsset = asset || saucerAsset;
     int segs = (scale >= 4) ? 4 : ((scale >= 2) ? 2 : 1);
     const int wanted = segs;
     if (segs > 1 && !wideExtAcquire(owner)) segs = 1;   // lost the contest: render 1× wide
@@ -1592,7 +1601,7 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
         // chain, because the wide segment 0 it pairs with is still the one on screen.
         wideExtRelease(owner);
         for (int i = 0; i < rows; i++) {
-            const uint16_t m = asset ? enhancedAssetRow(asset, i, scale) : s_shotExpand[src[i]];
+            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
             dst0[(base + i) * 2] = m; dst0[(base + i) * 2 + 1] = m;   // both planes → pen 11
         }
         return;
@@ -1631,17 +1640,17 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
     //   pen 01 = (data, 0) · pen 10 = (0, data) · pen 11 = (data, data)
     // seg 0 (ch4/ch7) and seg 3 (ch1) use pen 11; seg 1 (ch5) pen 10 = COLOR26; seg 2 (ch6)
     // pen 01 = COLOR29.  All four colour registers are poked to the same value each frame.
-    if (asset && segs == 2) {
+    if (enhancedAsset && segs == 2) {
         for (int i = 0; i < rows; i++) {
-            const uint16_t m = enhancedAssetRow(asset, i, scale);
+            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
             const uint16_t w0 = s_shotExpand[m >> 8];
             dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;
             const uint16_t w1 = s_shotExpand[m & 0xFF];
             ed[0][(base + i) * 2] = 0; ed[0][(base + i) * 2 + 1] = w1;
         }
-    } else if (asset) { // four segments: expand each authored nibble to one 16-pixel segment
+    } else if (enhancedAsset) { // four segments: expand each authored nibble to one 16-pixel segment
         for (int i = 0; i < rows; i++) {
-            const uint16_t m = enhancedAssetRow(asset, i, scale);
+            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
             const uint16_t w0 = s_wideExpand4[(m >> 12) & 0x0F];
             dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;
             const uint16_t w1 = s_wideExpand4[(m >> 8) & 0x0F];
@@ -1650,7 +1659,7 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
             ed[1][(base + i) * 2] = w2; ed[1][(base + i) * 2 + 1] = 0;
         }
         for (int i = 0; i < segRows[3]; i++) {
-            const uint16_t m = enhancedAssetRow(asset, i, scale);
+            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
             const uint16_t w3 = s_wideExpand4[m & 0x0F];
             ed[2][(base + i) * 2] = w3; ed[2][(base + i) * 2 + 1] = w3;
         }
@@ -2003,7 +2012,8 @@ void RescueOnFractalus::buildScopeP3Sprite()
         int rows = bot - top + 1;
         if (rows > kScopeP3Rows) rows = kScopeP3Rows;
         for (int i = 0; i < rows; i++) {
-            uint16_t m = expandShotRow(mem[0x0F00 + top + i]);
+            const uint8_t source = mem[0x0F00 + top + i];
+            uint16_t m = g_enhancedGraphics ? kEnhancedSaucerRow[source] : expandShotRow(source);
             d[i * 2] = m; d[i * 2 + 1] = m;        // both planes → pen 11 → COLOR23 (cyan)
         }
         scopeP3Sprite->setY((uint16_t)(kTerrainLine + (top - 0x32) + 7));  // buffer row → Amiga line (+7 user-calibrated)
