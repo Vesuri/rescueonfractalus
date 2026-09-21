@@ -30,4 +30,31 @@ static const EnhancedSpriteAsset kEnhancedTorpedo[8] = {
     { kEnhancedTorpedo6, 2 }, { kEnhancedTorpedo7, 1 }
 };
 
+// Seven fixed impact-circle sizes. Their one-pixel edge increments replace the doubled horizontal
+// steps in the Atari masks while retaining the original 1/2/4/6/8/10/14-row animation sizes.
+static const uint16_t kEnhancedExplosion1[]  = { 0x0080 };
+static const uint16_t kEnhancedExplosion2[]  = { 0x0180, 0x0180 };
+static const uint16_t kEnhancedExplosion4[]  = { 0x0180, 0x03C0, 0x03C0, 0x0180 };
+static const uint16_t kEnhancedExplosion6[]  = {
+    0x0180, 0x07E0, 0x0FF0, 0x0FF0, 0x07E0, 0x0180
+};
+static const uint16_t kEnhancedExplosion8[]  = {
+    0x0180, 0x07E0, 0x0FF0, 0x1FF8, 0x1FF8, 0x0FF0, 0x07E0, 0x0180
+};
+static const uint16_t kEnhancedExplosion10[] = {
+    0x0180, 0x03C0, 0x07E0, 0x0FF0, 0x1FF8,
+    0x1FF8, 0x0FF0, 0x07E0, 0x03C0, 0x0180
+};
+static const uint16_t kEnhancedExplosion14[] = {
+    0x0180, 0x03C0, 0x07E0, 0x0FF0, 0x1FF8, 0x3FFC, 0xFFFF,
+    0xFFFF, 0x3FFC, 0x1FF8, 0x0FF0, 0x07E0, 0x03C0, 0x0180
+};
+
+static const EnhancedSpriteAsset kEnhancedExplosion[7] = {
+    { kEnhancedExplosion1, 1 }, { kEnhancedExplosion2, 2 },
+    { kEnhancedExplosion4, 4 }, { kEnhancedExplosion6, 6 },
+    { kEnhancedExplosion8, 8 }, { kEnhancedExplosion10, 10 },
+    { kEnhancedExplosion14, 14 }
+};
+
 #endif

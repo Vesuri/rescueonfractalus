@@ -1448,13 +1448,27 @@ static inline uint16_t enhancedAssetRow(const EnhancedSpriteAsset* asset, int ro
     return sourceRow < asset->height ? asset->rows[sourceRow] : 0;
 }
 
-static const EnhancedSpriteAsset* enhancedTorpedoAsset()
+static const EnhancedSpriteAsset* enhancedShotAsset(int rows, int scale)
 {
     // $0036 bit 7 is the impact/explosion state. $2867 is the exact frame copied into the
-    // currently mirrored P2 strip; require both to identify a travelling player torpedo.
-    if (!g_enhancedGraphics || (mem[0x0036] & 0x80u) || mem[0x2867] >= 0x1Au) return nullptr;
-    const uint8_t frame = mem[0x2867] < 8 ? mem[0x2867] : 7;
-    return &kEnhancedTorpedo[frame];
+    // currently mirrored P2 strip, so it distinguishes the travelling torpedo from its impact.
+    if (!g_enhancedGraphics) return nullptr;
+    if (!(mem[0x0036] & 0x80u) && mem[0x2867] < 0x1Au) {
+        const uint8_t frame = mem[0x2867] < 8 ? mem[0x2867] : 7;
+        return &kEnhancedTorpedo[frame];
+    }
+
+    const int height = (scale >= 4) ? (rows >> 2) : ((scale >= 2) ? (rows >> 1) : rows);
+    switch (height) {
+        case 1:  return &kEnhancedExplosion[0];
+        case 2:  return &kEnhancedExplosion[1];
+        case 4:  return &kEnhancedExplosion[2];
+        case 6:  return &kEnhancedExplosion[3];
+        case 8:  return &kEnhancedExplosion[4];
+        case 10: return &kEnhancedExplosion[5];
+        case 14: return &kEnhancedExplosion[6];
+        default: return nullptr; // clipped/unrecognised strip: retain the faithful rendering
+    }
 }
 
 // GTIA SIZEPn ($D008-$D00B) → the Amiga horizontal scale.  Only bits 1-0 reach the hardware, and
@@ -1561,7 +1575,7 @@ void RescueOnFractalus::wideExtRelease(uint8_t owner, bool now)
 void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* src,
                                         int base, int rows, int scale, uint16_t x, uint8_t owner)
 {
-    const EnhancedSpriteAsset* asset = (owner == kWideShot) ? enhancedTorpedoAsset() : nullptr;
+    const EnhancedSpriteAsset* asset = (owner == kWideShot) ? enhancedShotAsset(rows, scale) : nullptr;
     int segs = (scale >= 4) ? 4 : ((scale >= 2) ? 2 : 1);
     const int wanted = segs;
     if (segs > 1 && !wideExtAcquire(owner)) segs = 1;   // lost the contest: render 1× wide
