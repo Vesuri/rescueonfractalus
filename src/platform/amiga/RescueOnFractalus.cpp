@@ -536,8 +536,7 @@ static void buildCockpitPlanarAsset()
 }
 
 // Starfield glyph tables: byte → 16-bit sprite word, rendering each star sub-position as a
-// 4-lores-px dot at its FAITHFUL offset (matches the Atari's SIZEP=$03 quad players, whose set
-// bits are 4 colour clocks = 4 Amiga px wide — measured against atari033.png).  The star
+// 4-lores-px dot at its faithful offset.  These are the faithful-mode conversion tables.  The star
 // pattern only ever sets bits 7/5/2/0 ($80/$20/$04/$01), which on a 32-cc quad player sit at
 // offsets 0/8/20/28 cc.  A 16 px hardware sprite can't span that, so each Atari player is drawn
 // as TWO adjacent sprites (low = px 0-15, high = px 16-31, giving the full 32 cc span at 1:1):
@@ -546,6 +545,21 @@ static void buildCockpitPlanarAsset()
 // bit15 = leftmost sprite pixel.  Filled once in initialize().
 static uint16_t kStarGlyphLo[256];
 static uint16_t kStarGlyphHi[256];
+
+// Enhanced stars are no longer constrained by the Atari quad-player's four legal sub-positions.
+// Derive a stable 0..31 pixel position from the row's ring slot, player and original RANDOM-picked
+// pattern without consuming another POKEY random value (which would perturb gameplay).  Calling
+// this once for each half returns the same one-pixel dot in exactly one of the two sprites.
+static inline uint16_t enhancedStarWord(uint8_t bits, unsigned high,
+                                        unsigned player, unsigned slot)
+{
+    if (!bits) return 0;
+    uint16_t mix = (uint16_t)(slot + (slot << 3) + (slot << 5));   // slot * 41, no 68000 multiply
+    mix = (uint16_t)(mix + player * 13u + bits);
+    const unsigned x = (unsigned)((mix ^ (mix >> 5) ^ (mix >> 9)) & 31u);
+    if ((x >> 4) != high) return 0;
+    return (uint16_t)(0x8000u >> (x & 15u));
+}
 
 // Precomputed decode tables (filled in initialize()) — convert one source byte
 // straight to its output bitplane bytes, replacing the per-byte bit loops.
@@ -2333,7 +2347,12 @@ void RescueOnFractalus::buildStarSprites()
         const uint8_t* src = (const uint8_t*)&mem[kStarSrc[i >> 1]];
         const uint16_t* tbl = (i & 1) ? kStarGlyphHi : kStarGlyphLo;
         uint16_t* dst = ring + 2;                                   // slot 1 (skip control slot 0)
-        for (int r = 0; r < kStarRows; r++) { *dst++ = tbl[src[r]]; *dst++ = 0x0000; }
+        for (int r = 0; r < kStarRows; r++) {
+            *dst++ = g_enhancedGraphics
+                ? enhancedStarWord(src[r], (unsigned)(i & 1), (unsigned)(i >> 1), (unsigned)(r + 1))
+                : tbl[src[r]];
+            *dst++ = 0x0000;
+        }
 #ifdef ROF_FLIGHT_PROBE
         g_seSprConv += rof_subclock() - _k1;
 #endif
@@ -2424,7 +2443,9 @@ void RescueOnFractalus::starVblankUpdate()
         const uint16_t* tbl = (i & 1) ? kStarGlyphHi : kStarGlyphLo;
         for (int r = kStarRows - N; r < kStarRows; r++) {
             int slot = nw + 1 + r;                              // display row r of the advanced window
-            ring[2 * slot]     = tbl[src[r]];
+            ring[2 * slot]     = g_enhancedGraphics
+                ? enhancedStarWord(src[r], (unsigned)(i & 1), (unsigned)(i >> 1), (unsigned)slot)
+                : tbl[src[r]];
             ring[2 * slot + 1] = 0x0000;
         }
     }
@@ -3031,9 +3052,9 @@ void RescueOnFractalus::initialize()
         kDoubleGlyph[i] = out;
     }
 
-    // Precompute the starfield glyph tables (see kStarGlyphLo/Hi decl): each star sub-position
-    // → a 4-px dot at its faithful 0/8/20/28-cc offset, split across the low (px 0-15) and high
-    // (px 16-31) sprites of the player's two-sprite quad.  bit15 = leftmost sprite pixel.
+    // Precompute the faithful starfield glyph tables (see kStarGlyphLo/Hi decl): each star
+    // sub-position is a 4-px dot at its original 0/8/20/28-cc offset, split across the low
+    // (px 0-15) and high (px 16-31) sprites of the player's two-sprite quad.
     for (int i = 0; i < 256; i++) {
         uint16_t lo = 0, hi = 0;
         if (i & 0x80) lo |= 0xF000u;   // $80 (bit7): cc  0 → low  px 0-3
