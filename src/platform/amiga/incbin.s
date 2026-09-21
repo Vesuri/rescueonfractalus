@@ -76,6 +76,9 @@ rof_cockpit_planar_end:
 | and ExternalHooks.cpp, which makes that same hook point at the blobs below even when
 | the game is started directly from Workbench/Shell or amiga/run.sh.
 .ifdef ROF_ENHANCED_LOGO
+	| ROF_ENHANCED_GRAPHICS leaves the current section at .bss for the cockpit atlas above.
+	| Explicitly return to a file-backed section: .incbin data in .bss becomes zero at runtime.
+	.section .rodata
 	.balign 4
 	.global rof_enhanced_logo
 	.global rof_enhanced_games
