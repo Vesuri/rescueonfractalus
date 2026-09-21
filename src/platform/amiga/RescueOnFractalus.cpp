@@ -33,6 +33,7 @@
 #include "TerrainRenderConfig.h"
 #include "PaletteResolutionConfig.h"
 #include "EnhancedGraphicsConfig.h"
+#include "EnhancedSpriteAssets.h"
 #include "CockpitPlanarAssets.h"
 #include "PaletteInterpolation.h"
 #include "ExternalHooks.h"       // launcher-provided logo bitmap/palette override
@@ -1441,6 +1442,21 @@ static void buildShotExpandLut()
 }
 static inline uint16_t expandShotRow(uint8_t b) { return s_shotExpand[b]; }
 
+static inline uint16_t enhancedAssetRow(const EnhancedSpriteAsset* asset, int row, int scale)
+{
+    const int sourceRow = (scale >= 4) ? (row >> 2) : ((scale >= 2) ? (row >> 1) : row);
+    return sourceRow < asset->height ? asset->rows[sourceRow] : 0;
+}
+
+static const EnhancedSpriteAsset* enhancedTorpedoAsset()
+{
+    // $0036 bit 7 is the impact/explosion state. $2867 is the exact frame copied into the
+    // currently mirrored P2 strip; require both to identify a travelling player torpedo.
+    if (!g_enhancedGraphics || (mem[0x0036] & 0x80u) || mem[0x2867] >= 0x1Au) return nullptr;
+    const uint8_t frame = mem[0x2867] < 8 ? mem[0x2867] : 7;
+    return &kEnhancedTorpedo[frame];
+}
+
 // GTIA SIZEPn ($D008-$D00B) → the Amiga horizontal scale.  Only bits 1-0 reach the hardware, and
 // value 2 is a SECOND encoding of "normal" — so mask exactly as GTIA does rather than comparing
 // the shadow byte to 0/1/3.  That also makes a stale shadow harmless: mem[$00CD] read $62 in
@@ -1545,6 +1561,7 @@ void RescueOnFractalus::wideExtRelease(uint8_t owner, bool now)
 void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* src,
                                         int base, int rows, int scale, uint16_t x, uint8_t owner)
 {
+    const EnhancedSpriteAsset* asset = (owner == kWideShot) ? enhancedTorpedoAsset() : nullptr;
     int segs = (scale >= 4) ? 4 : ((scale >= 2) ? 2 : 1);
     const int wanted = segs;
     if (segs > 1 && !wideExtAcquire(owner)) segs = 1;   // lost the contest: render 1× wide
@@ -1561,7 +1578,7 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
         // chain, because the wide segment 0 it pairs with is still the one on screen.
         wideExtRelease(owner);
         for (int i = 0; i < rows; i++) {
-            const uint16_t m = s_shotExpand[src[i]];
+            const uint16_t m = asset ? enhancedAssetRow(asset, i, scale) : s_shotExpand[src[i]];
             dst0[(base + i) * 2] = m; dst0[(base + i) * 2 + 1] = m;   // both planes → pen 11
         }
         return;
@@ -1600,7 +1617,34 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
     //   pen 01 = (data, 0) · pen 10 = (0, data) · pen 11 = (data, data)
     // seg 0 (ch4/ch7) and seg 3 (ch1) use pen 11; seg 1 (ch5) pen 10 = COLOR26; seg 2 (ch6)
     // pen 01 = COLOR29.  All four colour registers are poked to the same value each frame.
-    if (segs == 2) {
+    if (asset && segs == 2) {
+        for (int i = 0; i < rows; i++) {
+            const uint16_t m = enhancedAssetRow(asset, i, scale);
+            const uint16_t w0 = s_shotExpand[m >> 8];
+            dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;
+            const uint16_t w1 = s_shotExpand[m & 0xFF];
+            ed[0][(base + i) * 2] = 0; ed[0][(base + i) * 2 + 1] = w1;
+        }
+    } else if (asset) { // four segments: expand each authored nibble to one 16-pixel segment
+        for (int i = 0; i < rows; i++) {
+            const uint16_t m = enhancedAssetRow(asset, i, scale);
+            const uint16_t w0 = s_wideExpand4[(m >> 12) & 0x0F];
+            dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;
+            const uint16_t w1 = s_wideExpand4[(m >> 8) & 0x0F];
+            ed[0][(base + i) * 2] = 0; ed[0][(base + i) * 2 + 1] = w1;
+            const uint16_t w2 = s_wideExpand4[(m >> 4) & 0x0F];
+            ed[1][(base + i) * 2] = w2; ed[1][(base + i) * 2 + 1] = 0;
+        }
+        for (int i = 0; i < segRows[3]; i++) {
+            const uint16_t m = enhancedAssetRow(asset, i, scale);
+            const uint16_t w3 = s_wideExpand4[m & 0x0F];
+            ed[2][(base + i) * 2] = w3; ed[2][(base + i) * 2 + 1] = w3;
+        }
+        widePrevBase[1][w] = base; widePrevRows[1][w] = rows;
+        widePrevBase[2][w] = base; widePrevRows[2][w] = segRows[3];
+        wideExt[1][w]->setX((uint16_t)(x + 32));
+        wideExt[2][w]->setX((uint16_t)(x + 48));
+    } else if (segs == 2) {
         for (int i = 0; i < rows; i++) {
             const uint8_t b = src[i];
             const uint16_t w0 = s_wideExpand4[b >> 4];
