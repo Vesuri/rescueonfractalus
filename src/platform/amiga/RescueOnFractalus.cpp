@@ -3962,31 +3962,27 @@ static void buildPlanetNativeLut()
     s_planetNativeLutReady = true;
 }
 
-static void planetNativePut(int x, int y, uint8_t colour)
+static inline __attribute__((always_inline)) int planetLerp8(int a, int b, int step)
 {
-    if ((unsigned)x >= ROF_FLIGHT_PHYSICAL_WIDTH ||
-        (unsigned)y >= ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS) return;
-    uint8_t* const q = s_planetNative + y * kPlanetNativeRowBytes + (x >> 2);
-    const unsigned shift = (unsigned)(3 - (x & 3)) * 2u;
-    const uint8_t mask = (uint8_t)(3u << shift);
-    const uint8_t value = (uint8_t)(colour << shift);
-    if ((*q & mask) != value) {
-        *q = (uint8_t)((*q & (uint8_t)~mask) | value);
-        s_planetNativeDirty[y] = 1;
+    /* step is exactly 0..7.  Spell the eighths as additions/shifts: an int multiply becomes a
+     * 32-bit __mulsi3 call with this compiler, which is catastrophic in this inner loop. */
+    const int d = b - a;
+    switch (step) {
+        case 0: return a;
+        case 1: return a + (d >> 3);
+        case 2: return a + (d >> 2);
+        case 3: return a + ((d + d + d) >> 3);
+        case 4: return a + (d >> 1);
+        case 5: return a + ((d + d + d + d + d) >> 3);
+        case 6: return a + ((d + d + d) >> 2);
+        default:return a + ((d + d + d + d + d + d + d) >> 3);
     }
 }
 
-static void planetNativeVSpan(int x, int y0, int y1, uint8_t colour)
+static uint8_t reversePlanetPixels(uint8_t v)
 {
-    if (y0 < 0) y0 = 0;
-    if (y1 >= ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS)
-        y1 = ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS - 1;
-    for (int y = y0; y <= y1; ++y) planetNativePut(x, y, colour);
-}
-
-static int planetLerp8(int a, int b, int step)
-{
-    return a + (((b - a) * step) >> 3);
+    return (uint8_t)(((v & 0xc0u) >> 6) | ((v & 0x30u) >> 2) |
+                     ((v & 0x0cu) << 2) | ((v & 0x03u) << 6));
 }
 }
 
@@ -4036,32 +4032,66 @@ void RescueOnFractalus::planetNativeEnd()
      * distance boundary across its strip, then mirror it, retaining the original three overdraws
      * (FF body, AA rim, 55 highlight).  Distances are 8.8 fixed-point: >>7 exposes their next bit
      * as the odd physical scanline, which is the vertical precision the old high-byte writer lost. */
-    for (int i = 2; i < 22; ++i) {
-        const PlanetColumnSample& a = s_planetColumn[i];
-        const PlanetColumnSample& b = s_planetColumn[(i < 21) ? i + 1 : i];
-        if (!a.valid || !b.valid) continue;
-        int aOld = (a.oldDistance >> 8) < 0x2f ? (a.oldDistance >> 7) : 92;
-        int bOld = (b.oldDistance >> 8) < 0x2f ? (b.oldDistance >> 7) : 92;
-        const int aNew = a.newDistance >> 7, bNew = b.newDistance >> 7;
-        int aAa = aNew - ((int)a.advanceHi << 1);
-        int bAa = bNew - ((int)b.advanceHi << 1);
-        if (aAa < 0) aAa = 0;
-        if (bAa < 0) bAa = 0;
-        const int x0 = (i - 2) * 8;
-        for (int sx = 0; sx < 8; ++sx) {
-            const int x = x0 + sx;
-            const int oldY = planetLerp8(aOld, bOld, sx);
-            const int newY = planetLerp8(aNew, bNew, sx);
-            const int aaY = planetLerp8(aAa, bAa, sx);
-            planetNativeVSpan(x,       newY, oldY + 1, 3);
-            planetNativeVSpan(319 - x, newY, oldY + 1, 3);
-            if ((a.oldDistance >> 8) != 0) {
-                planetNativeVSpan(x,       aaY, oldY - 1, 2);
-                planetNativeVSpan(319 - x, aaY, oldY - 1, 2);
+    /* Work in the packed buffer's natural four-pixel unit.  The first implementation issued six
+     * function calls per X and revisited the same bytes for the body, rim and highlight; near the
+     * end of the zoom that became tens of thousands of read/modify/writes.  Resolve the final
+     * overdraw colour of all four pixels here and touch each packed byte at most once per row. */
+    for (int byteX = 0; byteX < 40; ++byteX) {
+        int oldY[4], newY[4], aaY[4];
+        uint8_t drawRim[4], drawHighlight[4];
+        int yLo = ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS, yHi = -1;
+        for (int p = 0; p < 4; ++p) {
+            const int x = byteX * 4 + p;
+            const int i = 2 + (x >> 3);
+            const int sx = x & 7;
+            const PlanetColumnSample& a = s_planetColumn[i];
+            const PlanetColumnSample& b = s_planetColumn[(i < 21) ? i + 1 : i];
+            if (!a.valid || !b.valid) return;  // all 22 samples are an atomic frame
+            const int aOld = (a.oldDistance >> 8) < 0x2f ? (a.oldDistance >> 7) : 92;
+            const int bOld = (b.oldDistance >> 8) < 0x2f ? (b.oldDistance >> 7) : 92;
+            const int aNew = a.newDistance >> 7, bNew = b.newDistance >> 7;
+            int aAa = aNew - ((int)a.advanceHi << 1);
+            int bAa = bNew - ((int)b.advanceHi << 1);
+            if (aAa < 0) aAa = 0;
+            if (bAa < 0) bAa = 0;
+            oldY[p] = planetLerp8(aOld, bOld, sx);
+            newY[p] = planetLerp8(aNew, bNew, sx);
+            aaY[p]  = planetLerp8(aAa, bAa, sx);
+            drawRim[p] = (uint8_t)((a.oldDistance >> 8) != 0);
+            drawHighlight[p] = (uint8_t)(((aaY[p] >> 1) < 0x2b) && aaY[p] >= 2);
+            int lo = newY[p];
+            if (drawRim[p] && aaY[p] < lo) lo = aaY[p];
+            if (drawHighlight[p] && aaY[p] - 2 < lo) lo = aaY[p] - 2;
+            if (lo < yLo) yLo = lo;
+            if (oldY[p] + 1 > yHi) yHi = oldY[p] + 1;
+            if (drawHighlight[p] && aaY[p] - 1 > yHi) yHi = aaY[p] - 1;
+        }
+        if (yLo < 0) yLo = 0;
+        if (yHi >= ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS)
+            yHi = ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS - 1;
+        for (int y = yLo; y <= yHi; ++y) {
+            uint8_t mask = 0, value = 0;
+            for (int p = 0; p < 4; ++p) {
+                int colour = -1;
+                if (y >= newY[p] && y <= oldY[p] + 1) colour = 3;
+                if (drawRim[p] && y >= aaY[p] && y <= oldY[p] - 1) colour = 2;
+                if (drawHighlight[p] && y >= aaY[p] - 2 && y <= aaY[p] - 1) colour = 1;
+                if (colour >= 0) {
+                    const unsigned shift = (unsigned)(3 - p) * 2u;
+                    mask  |= (uint8_t)(3u << shift);
+                    value |= (uint8_t)((unsigned)colour << shift);
+                }
             }
-            if ((aaY >> 1) < 0x2b && aaY >= 2) {
-                planetNativeVSpan(x,       aaY - 2, aaY - 1, 1);
-                planetNativeVSpan(319 - x, aaY - 2, aaY - 1, 1);
+            if (!mask) continue;
+            uint8_t* const left = s_planetNative + y * kPlanetNativeRowBytes + byteX;
+            const uint8_t l = (uint8_t)((*left & (uint8_t)~mask) | value);
+            const uint8_t rmask = reversePlanetPixels(mask);
+            const uint8_t rvalue = reversePlanetPixels(value);
+            uint8_t* const right = s_planetNative + y * kPlanetNativeRowBytes + (79 - byteX);
+            const uint8_t r = (uint8_t)((*right & (uint8_t)~rmask) | rvalue);
+            if (l != *left || r != *right) {
+                *left = l; *right = r;
+                s_planetNativeDirty[y] = 1;
             }
         }
     }
@@ -4078,10 +4108,17 @@ void RescueOnFractalus::renderPlanetNative()
         const uint8_t* s = s_planetNative + y * kPlanetNativeRowBytes;
         uint8_t* p1 = dst + y * ROF_FLIGHT_ROW_STRIDE;
         uint8_t* p2 = p1 + ROF_FLIGHT_PLANE_ROW_BYTES;
-        for (int b = 0; b < ROF_FLIGHT_PLANE_ROW_BYTES; ++b) {
-            const uint8_t a = *s++, c = *s++;
-            p1[b] = (uint8_t)((s_planetNibbleP1[a] << 4) | s_planetNibbleP1[c]);
-            p2[b] = (uint8_t)((s_planetNibbleP2[a] << 4) | s_planetNibbleP2[c]);
+        uint32_t* q1 = (uint32_t*)p1;
+        uint32_t* q2 = (uint32_t*)p2;
+        for (int group = 0; group < 10; ++group) {
+            uint32_t o1 = 0, o2 = 0;
+            for (int b = 0; b < 4; ++b) {
+                const uint8_t a = *s++, c = *s++;
+                o1 = (o1 << 8) | (uint8_t)((s_planetNibbleP1[a] << 4) | s_planetNibbleP1[c]);
+                o2 = (o2 << 8) | (uint8_t)((s_planetNibbleP2[a] << 4) | s_planetNibbleP2[c]);
+            }
+            *q1++ = o1;
+            *q2++ = o2;
         }
     }
 }
