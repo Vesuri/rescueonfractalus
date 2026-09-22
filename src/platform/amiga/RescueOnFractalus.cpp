@@ -1447,17 +1447,117 @@ static void buildShotExpandLut()
 }
 static inline uint16_t expandShotRow(uint8_t b) { return s_shotExpand[b]; }
 
+// The ROM carries 74 selectable saucer silhouettes (nine bank/attitude views for each near
+// distance group, followed by two tiny far views).  Atari's one-bit player cells are two Amiga
+// lores pixels wide, and SIZEP3 makes them 4/8 pixels wide at the close distances.  Expanding each
+// row independently therefore preserves the coarse stair-steps.  Enhanced Graphics instead reads
+// the COMPLETE selected ROM silhouette, recovers its four diamond vertices, and rasterises the
+// filled diamond directly at its final 16/32/64-pixel width.  One cache per SIZEP3 scale means this
+// work happens only when the selected ROM view changes, never for every displayed row/frame.
+static const int kEnhancedSaucerMaxRows = 24;
+struct EnhancedSaucerFrame {
+    bool ready;
+    uint8_t shapeIndex;
+    uint8_t rows;
+    uint8_t scale;
+    uint16_t segment[kEnhancedSaucerMaxRows][4];
+};
+static EnhancedSaucerFrame s_enhancedSaucerFrame[3];
+
+static int currentSaucerShapeIndex()
+{
+    const uint8_t a = mem[MEM_p3_object_mode];
+    if (a >= 0x20u) return -1;                 // no flying saucer (scope P3 may be the dome)
+    if (a >= 0x15u) return 0x49;
+    if (a >= 0x0Cu) return 0x48;
+    int group;
+    if      (a >= 9u) group = 7;
+    else if (a >= 7u) group = 6;
+    else if (a >= 5u) group = 5;
+    else              group = a;
+    return (int)mem[MEM_player3_xbase] + 9 * group;
+}
+
+static int saucerLerp(int x0, int y0, int x1, int y1, int y)
+{
+    const int16_t dy = (int16_t)(y1 - y0);
+    if (!dy) return x1;
+    int32_t n = rof_muls16((int16_t)(x1 - x0), (int16_t)(y - y0));
+    n += (n >= 0) ? dy / 2 : -(dy / 2);         // nearest pixel, not a coarse source-cell edge
+    return x0 + rof_divs16(n, dy);
+}
+
+static const EnhancedSaucerFrame* enhancedSaucerFrame(int scale)
+{
+    if (!g_enhancedGraphics || mem[MEM_player3_dither_flag] == 0) return nullptr;
+    const int shapeIndex = currentSaucerShapeIndex();
+    if (shapeIndex < 0) return nullptr;
+    const int slot = (scale >= 4) ? 2 : ((scale >= 2) ? 1 : 0);
+    EnhancedSaucerFrame* frame = &s_enhancedSaucerFrame[slot];
+    if (frame->ready && frame->shapeIndex == shapeIndex && frame->scale == scale) return frame;
+
+    const uint16_t ptr = ROF_PAIR16(mem[0x4D3E + shapeIndex * 2],
+                                    mem[0x4D3F + shapeIndex * 2]);
+    uint8_t left[kEnhancedSaucerMaxRows], right[kEnhancedSaucerMaxRows];
+    int rows = 0, minLeft = 8, maxRight = -1;
+    while (rows < kEnhancedSaucerMaxRows) {
+        const uint8_t bits = mem[(uint16_t)(ptr + rows)];
+        if (!bits) break;
+        int l = 0, r = 7;
+        while (!(bits & (uint8_t)(0x80u >> l))) l++;
+        while (!(bits & (uint8_t)(0x80u >> r))) r--;
+        left[rows] = (uint8_t)l; right[rows] = (uint8_t)r;
+        if (l < minLeft) minLeft = l;
+        if (r > maxRight) maxRight = r;
+        rows++;
+    }
+    if (!rows || (rows == kEnhancedSaucerMaxRows && mem[(uint16_t)(ptr + rows)] != 0)) return nullptr;
+
+    int leftYSum = 0, leftYCount = 0, rightYSum = 0, rightYCount = 0;
+    for (int y = 0; y < rows; y++) {
+        if (left[y] == minLeft)  { leftYSum += y;  leftYCount++; }
+        if (right[y] == maxRight) { rightYSum += y; rightYCount++; }
+    }
+    const int leftY = rof_divu16((uint16_t)(leftYSum + leftYCount / 2),
+                                  (uint16_t)leftYCount);
+    const int rightY = rof_divu16((uint16_t)(rightYSum + rightYCount / 2),
+                                   (uint16_t)rightYCount);
+    const uint16_t pixelsPerCell = (uint16_t)(scale << 1);
+    const int topX = (int)((rof_mulu16((uint16_t)(left[0] + right[0] + 1), pixelsPerCell) - 1) >> 1);
+    const int bottomX = (int)((rof_mulu16((uint16_t)(left[rows - 1] + right[rows - 1] + 1),
+                                          pixelsPerCell) - 1) >> 1);
+    const int leftX = (int)rof_mulu16((uint16_t)minLeft, pixelsPerCell);
+    const int rightX = (int)rof_mulu16((uint16_t)(maxRight + 1), pixelsPerCell) - 1;
+
+    for (int y = 0; y < kEnhancedSaucerMaxRows; y++)
+        for (int s = 0; s < 4; s++) frame->segment[y][s] = 0;
+    for (int y = 0; y < rows; y++) {
+        int l = (y <= leftY) ? saucerLerp(topX, 0, leftX, leftY, y)
+                             : saucerLerp(leftX, leftY, bottomX, rows - 1, y);
+        int r = (y <= rightY) ? saucerLerp(topX, 0, rightX, rightY, y)
+                              : saucerLerp(rightX, rightY, bottomX, rows - 1, y);
+        if (l > r) { const int t = l; l = r; r = t; }
+        for (int px = l; px <= r; px++)
+            frame->segment[y][px >> 4] |= (uint16_t)(0x8000u >> (px & 15));
+    }
+    frame->shapeIndex = (uint8_t)shapeIndex;
+    frame->rows = (uint8_t)rows;
+    frame->scale = (uint8_t)scale;
+    frame->ready = true;
+    return frame;
+}
+
 static inline uint16_t enhancedAssetRow(const EnhancedSpriteAsset* asset, int row, int scale)
 {
     const int sourceRow = (scale >= 4) ? (row >> 2) : ((scale >= 2) ? (row >> 1) : row);
     return sourceRow < asset->height ? asset->rows[sourceRow] : 0;
 }
 
-static inline uint16_t enhancedObjectRow(const EnhancedSpriteAsset* asset, bool saucer,
+static inline uint16_t enhancedObjectRow(const EnhancedSpriteAsset* asset,
                                          const volatile uint8_t* source, int row, int scale)
 {
     if (asset) return enhancedAssetRow(asset, row, scale);
-    return saucer ? kEnhancedSaucerRow[source[row]] : s_shotExpand[source[row]];
+    return s_shotExpand[source[row]];
 }
 
 static const EnhancedSpriteAsset* enhancedShotAsset(int rows, int scale)
@@ -1585,11 +1685,12 @@ void RescueOnFractalus::wideExtRelease(uint8_t owner, bool now)
 }
 
 void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* src,
-                                        int base, int rows, int scale, uint16_t x, uint8_t owner)
+                                        int base, int rows, int scale, uint16_t x, uint8_t owner,
+                                        int sourceRowOffset)
 {
     const EnhancedSpriteAsset* asset = (owner == kWideShot) ? enhancedShotAsset(rows, scale) : nullptr;
-    const bool saucerAsset = g_enhancedGraphics && owner == kWideP3;
-    const bool enhancedAsset = asset || saucerAsset;
+    const EnhancedSaucerFrame* saucer = (owner == kWideP3) ? enhancedSaucerFrame(scale) : nullptr;
+    const bool enhancedAsset = asset != nullptr;
     int segs = (scale >= 4) ? 4 : ((scale >= 2) ? 2 : 1);
     const int wanted = segs;
     if (segs > 1 && !wideExtAcquire(owner)) segs = 1;   // lost the contest: render 1× wide
@@ -1606,7 +1707,10 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
         // chain, because the wide segment 0 it pairs with is still the one on screen.
         wideExtRelease(owner);
         for (int i = 0; i < rows; i++) {
-            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
+            const int sr = sourceRowOffset + i;
+            const uint16_t m = saucer
+                ? ((sr >= 0 && sr < saucer->rows) ? saucer->segment[sr][0] : 0)
+                : enhancedObjectRow(asset, src, i, scale);
             dst0[(base + i) * 2] = m; dst0[(base + i) * 2 + 1] = m;   // both planes → pen 11
         }
         return;
@@ -1645,9 +1749,35 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
     //   pen 01 = (data, 0) · pen 10 = (0, data) · pen 11 = (data, data)
     // seg 0 (ch4/ch7) and seg 3 (ch1) use pen 11; seg 1 (ch5) pen 10 = COLOR26; seg 2 (ch6)
     // pen 01 = COLOR29.  All four colour registers are poked to the same value each frame.
-    if (enhancedAsset && segs == 2) {
+    if (saucer) {
+        // The cached saucer is already rasterised at the FINAL SIZEP3 width.  Copy its 16-pixel
+        // slices directly; expanding them here would put the old 2/4-pixel stair-steps back.
         for (int i = 0; i < rows; i++) {
-            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
+            const int sr = sourceRowOffset + i;
+            const uint16_t* m = (sr >= 0 && sr < saucer->rows) ? saucer->segment[sr] : nullptr;
+            const uint16_t w0 = m ? m[0] : 0;
+            dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;
+            const uint16_t w1 = m ? m[1] : 0;
+            ed[0][(base + i) * 2] = 0; ed[0][(base + i) * 2 + 1] = w1;
+            if (segs >= 4) {
+                const uint16_t w2 = m ? m[2] : 0;
+                ed[1][(base + i) * 2] = w2; ed[1][(base + i) * 2 + 1] = 0;
+            }
+        }
+        if (segs >= 4) {
+            for (int i = 0; i < segRows[3]; i++) {
+                const int sr = sourceRowOffset + i;
+                const uint16_t w3 = (sr >= 0 && sr < saucer->rows) ? saucer->segment[sr][3] : 0;
+                ed[2][(base + i) * 2] = w3; ed[2][(base + i) * 2 + 1] = w3;
+            }
+            widePrevBase[1][w] = base; widePrevRows[1][w] = rows;
+            widePrevBase[2][w] = base; widePrevRows[2][w] = segRows[3];
+            wideExt[1][w]->setX((uint16_t)(x + 32));
+            wideExt[2][w]->setX((uint16_t)(x + 48));
+        }
+    } else if (enhancedAsset && segs == 2) {
+        for (int i = 0; i < rows; i++) {
+            const uint16_t m = enhancedObjectRow(asset, src, i, scale);
             const uint16_t w0 = s_shotExpand[m >> 8];
             dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;
             const uint16_t w1 = s_shotExpand[m & 0xFF];
@@ -1655,7 +1785,7 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
         }
     } else if (enhancedAsset) { // four segments: expand each authored nibble to one 16-pixel segment
         for (int i = 0; i < rows; i++) {
-            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
+            const uint16_t m = enhancedObjectRow(asset, src, i, scale);
             const uint16_t w0 = s_wideExpand4[(m >> 12) & 0x0F];
             dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;
             const uint16_t w1 = s_wideExpand4[(m >> 8) & 0x0F];
@@ -1664,7 +1794,7 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
             ed[1][(base + i) * 2] = w2; ed[1][(base + i) * 2 + 1] = 0;
         }
         for (int i = 0; i < segRows[3]; i++) {
-            const uint16_t m = enhancedObjectRow(asset, saucerAsset, src, i, scale);
+            const uint16_t m = enhancedObjectRow(asset, src, i, scale);
             const uint16_t w3 = s_wideExpand4[m & 0x0F];
             ed[2][(base + i) * 2] = w3; ed[2][(base + i) * 2 + 1] = w3;
         }
@@ -2016,9 +2146,19 @@ void RescueOnFractalus::buildScopeP3Sprite()
     if (top >= 0) {
         int rows = bot - top + 1;
         if (rows > kScopeP3Rows) rows = kScopeP3Rows;
+        const EnhancedSaucerFrame* saucer = enhancedSaucerFrame(1);
+        const int drawStart = (mem[MEM_player3_draw_y] < 0x14u) ? 0x14
+                                                                 : mem[MEM_player3_draw_y];
+        const int sourceRowOffset = (top - 0x71) - drawStart;
+        // The scope copy is additionally AND-clipped by the original game's $2825 mask. Keep that
+        // gameplay/window clipping, but source the silhouette itself from the sharp full frame.
+        const uint16_t scopeClip = expandShotRow(mem[MEM_player3_shape_mask]);
         for (int i = 0; i < rows; i++) {
             const uint8_t source = mem[0x0F00 + top + i];
-            uint16_t m = g_enhancedGraphics ? kEnhancedSaucerRow[source] : expandShotRow(source);
+            const int sr = sourceRowOffset + i;
+            uint16_t m = (saucer && sr >= 0 && sr < saucer->rows)
+                ? (uint16_t)(saucer->segment[sr][0] & scopeClip)
+                : expandShotRow(source);
             d[i * 2] = m; d[i * 2 + 1] = m;        // both planes → pen 11 → COLOR23 (cyan)
         }
         scopeP3Sprite->setY((uint16_t)(kTerrainLine + (top - 0x32) + 7));  // buffer row → Amiga line (+7 user-calibrated)
@@ -2086,8 +2226,11 @@ void RescueOnFractalus::buildViewportP3Sprite()
         // with the Main-Window strip spanning all 8 source bits over its 19 rows.  There is no
         // mem[] shadow for it, so the value comes from the bus_write latch (src/cpu/bus.h).
         const uint16_t x = (uint16_t)(0x81 + ((int)mem[0x2870] - 0x32) * 2);      // HPOSP3 shadow → X
+        const int drawStart = (mem[MEM_player3_draw_y] < 0x14u) ? 0x14
+                                                                 : mem[MEM_player3_draw_y];
+        const int sourceRowOffset = (top - 0x1E) - drawStart;
         buildWideObject(d, mem + 0x0F00 + top, base, rows,
-                        sizepScale(g_sizep3_shadow), x, kWideP3);
+                        sizepScale(g_sizep3_shadow), x, kWideP3, sourceRowOffset);
         viewportP3Sprite->setX(x);
         p3ViewportPrevBase = base; p3ViewportPrevRows = rows;
     } else {

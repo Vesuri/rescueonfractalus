@@ -197,9 +197,11 @@ private:
     // Render one widened player strip across 1/2/4 segments.  dst0 = the object's own sprite data
     // (past the 2 control words); src = &mem[<PMG page> + top], `rows` consecutive bytes; base =
     // the strip's first row within the FIXED-VSTART sprites; scale = 1/2/4; x = segment 0's Amiga
-    // sprite X.  Falls back to segment 0 alone if a higher-priority owner holds the extensions.
+    // sprite X. `sourceRowOffset` maps a clipped P3 window back into its complete ROM silhouette;
+    // shots leave it at zero. Falls back to segment 0 alone if a higher-priority owner holds the
+    // extensions.
     void buildWideObject(uint16_t* dst0, const volatile uint8_t* src, int base, int rows,
-                         int scale, uint16_t x, uint8_t owner);
+                         int scale, uint16_t x, uint8_t owner, int sourceRowOffset = 0);
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE).  Each is a
