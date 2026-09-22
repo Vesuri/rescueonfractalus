@@ -1524,6 +1524,22 @@ extern "C" void platform_tunnel_outer_ring(void)
     if (s_scene) s_scene->pokeTunnelOuterRing();
 }
 
+extern "C" void platform_planet_frame_begin(void)
+{
+    if (s_scene) s_scene->planetNativeBegin();
+}
+
+extern "C" void platform_planet_column(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
+                                        uint8_t newLo, uint8_t newHi, uint8_t advanceHi)
+{
+    if (s_scene) s_scene->planetNativeColumn(slot, oldLo, oldHi, newLo, newHi, advanceHi);
+}
+
+extern "C" void platform_planet_frame_end(void)
+{
+    if (s_scene) s_scene->planetNativeEnd();
+}
+
 
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's

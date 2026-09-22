@@ -3930,6 +3930,162 @@ void RescueOnFractalus::decodeBoostStars()
 // double-buffer halves; offset 0 is the displayed half) LMS'd from $1070 (= the
 // $1010 row-addr base + one off-screen scroll-margin row).  The +4 crop centres
 // the displayed 40 of 48 either way.
+namespace {
+enum { kPlanetNativeRowBytes = ROF_FLIGHT_PHYSICAL_WIDTH / 4 };
+struct PlanetColumnSample {
+    uint16_t oldDistance;
+    uint16_t newDistance;
+    uint8_t advanceHi;
+    uint8_t valid;
+};
+
+static uint8_t s_planetNative[ROF_FLIGHT_PHYSICAL_ROWS * kPlanetNativeRowBytes];
+static uint8_t s_planetNativeDirty[ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS];
+static uint8_t s_planetNibbleP1[256], s_planetNibbleP2[256];
+static PlanetColumnSample s_planetColumn[22];
+static bool s_planetNativeActive = false;
+static bool s_planetNativeLutReady = false;
+
+static void buildPlanetNativeLut()
+{
+    if (s_planetNativeLutReady) return;
+    for (unsigned v = 0; v < 256; ++v) {
+        uint8_t p1 = 0, p2 = 0;
+        for (int p = 0; p < 4; ++p) {
+            const uint8_t c = (uint8_t)((v >> (6 - 2 * p)) & 3u);
+            p1 |= (uint8_t)((c & 1u) << (3 - p));
+            p2 |= (uint8_t)(((c >> 1) & 1u) << (3 - p));
+        }
+        s_planetNibbleP1[v] = p1;
+        s_planetNibbleP2[v] = p2;
+    }
+    s_planetNativeLutReady = true;
+}
+
+static void planetNativePut(int x, int y, uint8_t colour)
+{
+    if ((unsigned)x >= ROF_FLIGHT_PHYSICAL_WIDTH ||
+        (unsigned)y >= ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS) return;
+    uint8_t* const q = s_planetNative + y * kPlanetNativeRowBytes + (x >> 2);
+    const unsigned shift = (unsigned)(3 - (x & 3)) * 2u;
+    const uint8_t mask = (uint8_t)(3u << shift);
+    const uint8_t value = (uint8_t)(colour << shift);
+    if ((*q & mask) != value) {
+        *q = (uint8_t)((*q & (uint8_t)~mask) | value);
+        s_planetNativeDirty[y] = 1;
+    }
+}
+
+static void planetNativeVSpan(int x, int y0, int y1, uint8_t colour)
+{
+    if (y0 < 0) y0 = 0;
+    if (y1 >= ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS)
+        y1 = ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS - 1;
+    for (int y = y0; y <= y1; ++y) planetNativePut(x, y, colour);
+}
+
+static int planetLerp8(int a, int b, int step)
+{
+    return a + (((b - a) * step) >> 3);
+}
+}
+
+void RescueOnFractalus::planetNativeBegin()
+{
+    if (!g_flightEnhancedTerrain || !viewportBitmap) return;
+    buildPlanetNativeLut();
+    if (!s_planetNativeActive) {
+        /* Seed the native buffer from the live mode-D field once.  This is a storage conversion,
+         * not a visual filter: each original cell occupies its exact 2x2 display footprint until
+         * the original planet algorithm supplies sub-pixel boundaries for it. */
+        const uint8_t* src = (const uint8_t*)&mem[0x1004];
+        for (int r = 0; r < ROF_FLIGHT_SOURCE_ROWS; ++r, src += 48) {
+            uint8_t* d0 = s_planetNative + (r * 2) * kPlanetNativeRowBytes;
+            uint8_t* d1 = d0 + kPlanetNativeRowBytes;
+            for (int b = 0; b < 40; ++b) {
+                const uint8_t v = src[b];
+                const uint8_t p0 = (uint8_t)((v >> 6) & 3u), p1 = (uint8_t)((v >> 4) & 3u);
+                const uint8_t p2 = (uint8_t)((v >> 2) & 3u), p3 = (uint8_t)(v & 3u);
+                const uint8_t a = (uint8_t)((p0 << 6) | (p0 << 4) | (p1 << 2) | p1);
+                const uint8_t c = (uint8_t)((p2 << 6) | (p2 << 4) | (p3 << 2) | p3);
+                d0[b * 2] = d1[b * 2] = a;
+                d0[b * 2 + 1] = d1[b * 2 + 1] = c;
+            }
+        }
+        s_planetNativeActive = true;
+    }
+    for (int i = 0; i < 22; ++i) s_planetColumn[i].valid = 0;
+}
+
+void RescueOnFractalus::planetNativeColumn(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
+                                            uint8_t newLo, uint8_t newHi, uint8_t advanceHi)
+{
+    if (!g_flightEnhancedTerrain || !s_planetNativeActive) return;
+    const unsigned i = slot >> 1;
+    if (i >= 22) return;
+    s_planetColumn[i].oldDistance = (uint16_t)(((uint16_t)oldHi << 8) | oldLo);
+    s_planetColumn[i].newDistance = (uint16_t)(((uint16_t)newHi << 8) | newLo);
+    s_planetColumn[i].advanceHi = advanceHi;
+    s_planetColumn[i].valid = 1;
+}
+
+void RescueOnFractalus::planetNativeEnd()
+{
+    if (!g_flightEnhancedTerrain || !s_planetNativeActive) return;
+    /* Slots 2..21 are the 20 visible eight-pixel strips on the left.  Interpolate each original
+     * distance boundary across its strip, then mirror it, retaining the original three overdraws
+     * (FF body, AA rim, 55 highlight).  Distances are 8.8 fixed-point: >>7 exposes their next bit
+     * as the odd physical scanline, which is the vertical precision the old high-byte writer lost. */
+    for (int i = 2; i < 22; ++i) {
+        const PlanetColumnSample& a = s_planetColumn[i];
+        const PlanetColumnSample& b = s_planetColumn[(i < 21) ? i + 1 : i];
+        if (!a.valid || !b.valid) continue;
+        int aOld = (a.oldDistance >> 8) < 0x2f ? (a.oldDistance >> 7) : 92;
+        int bOld = (b.oldDistance >> 8) < 0x2f ? (b.oldDistance >> 7) : 92;
+        const int aNew = a.newDistance >> 7, bNew = b.newDistance >> 7;
+        int aAa = aNew - ((int)a.advanceHi << 1);
+        int bAa = bNew - ((int)b.advanceHi << 1);
+        if (aAa < 0) aAa = 0;
+        if (bAa < 0) bAa = 0;
+        const int x0 = (i - 2) * 8;
+        for (int sx = 0; sx < 8; ++sx) {
+            const int x = x0 + sx;
+            const int oldY = planetLerp8(aOld, bOld, sx);
+            const int newY = planetLerp8(aNew, bNew, sx);
+            const int aaY = planetLerp8(aAa, bAa, sx);
+            planetNativeVSpan(x,       newY, oldY + 1, 3);
+            planetNativeVSpan(319 - x, newY, oldY + 1, 3);
+            if ((a.oldDistance >> 8) != 0) {
+                planetNativeVSpan(x,       aaY, oldY - 1, 2);
+                planetNativeVSpan(319 - x, aaY, oldY - 1, 2);
+            }
+            if ((aaY >> 1) < 0x2b && aaY >= 2) {
+                planetNativeVSpan(x,       aaY - 2, aaY - 1, 1);
+                planetNativeVSpan(319 - x, aaY - 2, aaY - 1, 1);
+            }
+        }
+    }
+}
+
+void RescueOnFractalus::renderPlanetNative()
+{
+    if (!viewportBitmap || !s_planetNativeActive) return;
+    buildPlanetNativeLut();
+    uint8_t* const dst = (uint8_t*)viewportBitmap->data;
+    for (int y = 0; y < ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS; ++y) {
+        if (!s_planetNativeDirty[y]) continue;
+        s_planetNativeDirty[y] = 0;
+        const uint8_t* s = s_planetNative + y * kPlanetNativeRowBytes;
+        uint8_t* p1 = dst + y * ROF_FLIGHT_ROW_STRIDE;
+        uint8_t* p2 = p1 + ROF_FLIGHT_PLANE_ROW_BYTES;
+        for (int b = 0; b < ROF_FLIGHT_PLANE_ROW_BYTES; ++b) {
+            const uint8_t a = *s++, c = *s++;
+            p1[b] = (uint8_t)((s_planetNibbleP1[a] << 4) | s_planetNibbleP1[c]);
+            p2[b] = (uint8_t)((s_planetNibbleP2[a] << 4) | s_planetNibbleP2[c]);
+        }
+    }
+}
+
 void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int rows)
 {
 #ifdef ROF_FLIGHT_PROBE
@@ -3946,10 +4102,26 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 #endif
     if (!viewportBitmap) return;
 
-    // Write each mode-D row to ONE interleaved scanline; the copper line-doubles the
-    // region vertically (the Planet/Flight viewport band toggles the bitplane modulo
-    // -40/+80 per scanline, re-displaying each row twice).  Layout per row: 40 plane1
-    // bytes, plane2 at +40, plane3 (always 0) at +80, then +120 to the next scanline.
+    extern volatile unsigned long g_planetRowLo, g_planetRowHi;
+    if (srcBase == 0x1000u && g_flightEnhancedTerrain &&
+        (viewportForceFull || srcBase != viewportLastBase)) {
+        s_planetNativeActive = false;
+        for (int y = 0; y < ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS; ++y)
+            s_planetNativeDirty[y] = 0;
+    }
+    if (srcBase == 0x1000u && g_flightEnhancedTerrain && s_planetNativeActive) {
+        renderPlanetNative();
+        const int bandHi = (int)g_planetRowHi;
+        g_planetRowLo = 9999; g_planetRowHi = 0;
+        if (bandHi >= ROF_FLIGHT_SOURCE_TERRAIN_ROWS)
+            decodeViewportRows(srcBase, stride, ROF_FLIGHT_SOURCE_TERRAIN_ROWS, rows - 1, false);
+        return;
+    }
+
+    // The original path writes each mode-D row to ONE interleaved scanline and the copper
+    // line-doubles it.  Enhanced Terrain writes the same decoded source footprint to TWO rows;
+    // its copper advances on every scanline so the native planet writer can later change either
+    // row independently.  Layout per physical row: plane1[40], plane2[40], plane3[40].
     //
     // Decode 4 source bytes at a time into one 32-bit store per plane (the 68000 (An)+
     // mode), as the Standby door decoder does: the plane bytes go to DMA-contended CHIP
@@ -3982,7 +4154,8 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
         // (base-change mid-stream, not the stars entry), kick it here.  Either way the shadow-zero
         // loop below runs while the blit is in flight, then we wait for it before the CPU writes.
         if (!viewportClearKicked)
-            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, (uint16_t)rows, 0);
+            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60,
+                (uint16_t)(g_flightEnhancedTerrain ? rows * 2 : rows), 0);
         for (int i = 0; i < rows * 10; i++) viewportShadow[i] = 0u;   // FAST RAM, overlaps the blit
         AmigaHardware::blitterWait();
         viewportClearKicked = false;
@@ -3999,7 +4172,6 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     // RAM but every 68000 access is slow + volatile, so the full per-frame scan cost ~17 ms
     // even though only ~3 rows change.  Entry frames (clearedFull) scan all rows but skip the
     // (now-cleared) zero groups.
-    extern volatile unsigned long g_planetRowLo, g_planetRowHi;
     int rStart = 0, rEnd = rows - 1;
     if (srcBase == 0x1000u && !clearedFull) {
         rStart = (int)g_planetRowLo;
@@ -4023,7 +4195,8 @@ void RescueOnFractalus::decodeViewportRows(uint16_t srcBase, int stride, int rSt
     static const int kCrop = 4;    // central 40 of 48 (centres content)
     (void)countGroups;
     const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + rof_mulu16((uint16_t)rStart, (uint16_t)stride);
-    uint8_t* vdest    = (uint8_t*)viewportBitmap->data + rof_mulu16((uint16_t)rStart, 120u);
+    const uint16_t dstRowStep = (uint16_t)(g_flightEnhancedTerrain ? 240u : 120u);
+    uint8_t* vdest    = (uint8_t*)viewportBitmap->data + rof_mulu16((uint16_t)rStart, dstRowStep);
     uint32_t* shadow  = viewportShadow + rof_mulu16((uint16_t)rStart, 10u);
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_vpDecMax, g_vpDecMaxVbi, g_vpDecMaxRows;
@@ -4044,15 +4217,20 @@ void RescueOnFractalus::decodeViewportRows(uint16_t srcBase, int stride, int rSt
             *shadow = key;
             uint8_t s0 = (uint8_t)(key >> 24), s1 = (uint8_t)(key >> 16),
                     s2 = (uint8_t)(key >>  8), s3 = (uint8_t)key;
-            *q1 = ((uint32_t)kModeDP1[s0] << 24) | ((uint32_t)kModeDP1[s1] << 16) |
-                  ((uint32_t)kModeDP1[s2] <<  8) |  (uint32_t)kModeDP1[s3];
-            *q2 = ((uint32_t)kModeDP2[s0] << 24) | ((uint32_t)kModeDP2[s1] << 16) |
-                  ((uint32_t)kModeDP2[s2] <<  8) |  (uint32_t)kModeDP2[s3];
+            const uint32_t o1 = ((uint32_t)kModeDP1[s0] << 24) | ((uint32_t)kModeDP1[s1] << 16) |
+                                ((uint32_t)kModeDP1[s2] <<  8) |  (uint32_t)kModeDP1[s3];
+            const uint32_t o2 = ((uint32_t)kModeDP2[s0] << 24) | ((uint32_t)kModeDP2[s1] << 16) |
+                                ((uint32_t)kModeDP2[s2] <<  8) |  (uint32_t)kModeDP2[s3];
+            *q1 = o1; *q2 = o2;
+            if (g_flightEnhancedTerrain) {
+                q1[30] = o1;   // next physical row, same plane offsets (120 / sizeof(uint32_t))
+                q2[30] = o2;
+            }
 #ifdef ROF_FLIGHT_PROBE
             extern volatile unsigned long g_starGroups; if (countGroups) g_starGroups++;
 #endif
         }
-        vdest += 120;                                        // one interleaved scanline
+        vdest += dstRowStep;
     }
 #ifdef ROF_FLIGHT_PROBE
     { unsigned long _d = rof_subclock() - _vp0;
@@ -5347,7 +5525,8 @@ void RescueOnFractalus::renderFrame()
         // would wipe content nothing repaints.
         const bool vpEntryClear = (viewportForceFull || viewportLastBase != 0x1000u);
         if (vpEntryClear && !viewportClearKicked) {
-            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
+            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60,
+                                        g_flightEnhancedTerrain ? 94 : 47, 0);
             viewportClearKicked = true;
         }
         for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i]);
@@ -7336,7 +7515,8 @@ void RescueOnFractalus::perFrameWork()
     // as its STARFIELD buffer (the copper reads it for the rows outside the reveal band), and this
     // clear would blank the starfield mid-cinematic.
     if (rsStars && !rsBoostViewport && viewportForceFull && viewportBitmap && !viewportClearKicked) {
-        AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
+        AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60,
+                                    g_flightEnhancedTerrain ? 94 : 47, 0);
         viewportClearKicked = true;
     }
     // Starfield zero-copy scroll — the main loop only does the ONE-TIME full build here; the whole

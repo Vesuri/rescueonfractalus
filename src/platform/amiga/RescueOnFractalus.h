@@ -73,6 +73,10 @@ public:
     void paintVSpan(uint8_t rowBot, uint8_t rowTop, uint8_t xL, uint8_t xR, uint16_t pen);
     uint16_t tunnelPen(uint8_t colour) const;  // GTIA nibble -> Amiga pen through the live owner's LUT
     void tunnelPaintBegin();     // arm the FORWARD ring painter + prime tunnelBitmap (before the pre-draw)
+    void planetNativeBegin();
+    void planetNativeColumn(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
+                            uint8_t newLo, uint8_t newHi, uint8_t advanceHi);
+    void planetNativeEnd();
     void decodeScannerBlinkCells(); // LR-scanner (#13) close-range blink cells $33DF/$33E0 -> cockpit
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
                                  // flightScannerTick) at 50Hz so the blink animates at full rate, not
@@ -283,6 +287,7 @@ private:
     unsigned char bandMiddleOr() const;   // OR of the band rows' middle columns, all 3 planes
 #endif
     void decodeViewportRows(uint16_t srcBase, int stride, int rStart, int rEnd, bool countGroups); // the row-range half of renderViewportModeD (also seeds the band at the stars entry)
+    void renderPlanetNative();   // enhanced terrain: changed native planet rows -> viewport planes
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
 
     // Static-Standby fixed copper list (built once, poked in place — see

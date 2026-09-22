@@ -8,6 +8,7 @@
 #include "framework/Bitmap.h"
 #include "framework/Sprite.h"
 #include "assets/atari_pal.h"   // atariToOCS() for the constant viewport/cockpit palettes
+#include "FlightTerrainGeometry.h"
 
 // ---- display geometry (MUST match RescueOnFractalus.cpp) ---------------------
 static const uint16_t kW            = 320;
@@ -160,12 +161,12 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_VP_PAL + 1] = copperMove(color01, atariToOCS(0x24));
     d[INDEX_VP_PAL + 2] = copperMove(color02, atariToOCS(0x28));
     d[INDEX_VP_PAL + 3] = copperMove(color03, atariToOCS(0x2A));
-    // Line doubling: each 120-byte interleaved row is shown on 2 scanlines by toggling
-    // the bitplane modulo at end-of-line — -40 rewinds plane1 to repeat the row, +80
-    // advances to the next.  Row 0's -40 is set here; rows 1..kTerrainHeight-1 alternate
-    // +80 (odd) / -40 (even) at each line's H-blank.  Constant every frame.
-    d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, (uint16_t)-40);
-    d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, (uint16_t)-40);
+    // Original renderer: toggle -40/+80 to show each stored row twice.  Enhanced Terrain:
+    // advance +80 after every scanline because viewportBitmap contains all 94 physical rows;
+    // that is what lets the planet path retain odd scanlines produced from its 8.8 distances.
+    const uint16_t nativeModulo = g_flightEnhancedTerrain ? (uint16_t)80 : (uint16_t)-40;
+    d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, nativeModulo);
+    d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, nativeModulo);
     uint32_t idx = INDEX_VP_LINEDOUBLE;
     for (uint16_t k = 1; k < kViewportHeight; k++) {
         d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1),
@@ -205,7 +206,8 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
         // line-179 handoff; holding BPL4 preserves the dashboard-row pointer loaded above.
         const uint16_t v = (cockpit.bitplanes == 4 && k == kViewportHeight - 1)
             ? (uint16_t)-40
-            : ((k & 1) ? (uint16_t)80 : (uint16_t)-40);
+            : (g_flightEnhancedTerrain ? (uint16_t)80
+                                       : ((k & 1) ? (uint16_t)80 : (uint16_t)-40));
         d[idx++] = copperMove(bpl1mod, v);
         d[idx++] = copperMove(bpl2mod, v);
     }

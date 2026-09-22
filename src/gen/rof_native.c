@@ -2132,6 +2132,17 @@ void step_accum_sub_7e(void) {
  * Defined here (the writer's TU) so every build that links the native twins resolves it. */
 volatile unsigned long g_planetRowLo = 9999, g_planetRowHi = 0;
 
+#ifdef ROF_PLATFORM_AMIGA
+/* Enhanced-terrain planet painter.  The faithful $1000 writer below remains authoritative for
+ * game state and validation; these hooks hand its original 22 distance samples to the Amiga's
+ * native 320x94 renderer.  Runtime-gated so the original terrain setting pays no per-column call
+ * overhead and keeps the old decode path byte-for-byte. */
+extern void platform_planet_frame_begin(void);
+extern void platform_planet_column(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
+                                   uint8_t newLo, uint8_t newHi, uint8_t advanceHi);
+extern void platform_planet_frame_end(void);
+#endif
+
 /* draw_vline_pair_core @ $6C4D — plot a symmetric pair of vertical lines down the screen field.
  * Walks from startRow down to endRow (inclusive), and at each row fills two mirror columns:
  * col = (colSourceX >> 1) + 2 and its mirror $2F-col.  For rows >= $2B the two cells are packed
@@ -2220,6 +2231,10 @@ static void update_object_distance_core(uint8_t slot,
     if (newHi & 0x80) newHi = 0;
     mem[MEM_obj_pos_table + slot]     = newLo;      /* $08A4[slot] = distance lo */
     mem[MEM_obj_pos_table + 1 + slot] = newHi;      /* $08A5[slot] = distance hi */
+#ifdef ROF_PLATFORM_AMIGA
+    if (g_flightEnhancedTerrain)
+        platform_planet_column(slot, distLo, distHi, newLo, newHi, mem[MEM_obj_advance_hi]);
+#endif
 
     /* The mem[$0084]/mem[$00B8] writes below are the 6502's faithful scratch side-effects (the
      * validation harness diffs full memory), left in place; the live draw inputs are passed to
@@ -2252,6 +2267,7 @@ static void update_object_distance_core(uint8_t slot,
 
     /* Draw #3 only while the row is still above the marker cut-off ($2B). */
     if (row < 0x2B) draw_vline_pair_core(row, endRow, slot, 0x55);
+
 }
 
 /* 6502-ABI shim: X = object slot; minuend (current distance) in {$00B9:$00BA}; subtrahend
@@ -2268,6 +2284,9 @@ void update_object_distance(void) {
  * build {$0085:$0084} = ($08A5[X] << 2) + $08D3 (and $00B9/$00BA = the slot's raw
  * lo/hi), and call update_object_distance to recompute + redraw that object. */
 void advance_object_positions(void) {
+#ifdef ROF_PLATFORM_AMIGA
+    if (g_flightEnhancedTerrain) platform_planet_frame_begin();
+#endif
     obj_anim_frame = (uint8_t)(obj_anim_frame + 1);              /* INC $08D1 */
     uint16_t s = (uint16_t)obj_advance_lo + 0x18;             /* CLC; ADC #$18 */
     obj_advance_lo = (uint8_t)s;
@@ -2293,6 +2312,9 @@ void advance_object_positions(void) {
         cpu.X = (uint8_t)x;
         update_object_distance();
     }
+#ifdef ROF_PLATFORM_AMIGA
+    if (g_flightEnhancedTerrain) platform_planet_frame_end();
+#endif
 }
 
 /* clear_alien_knock_active @ $7F74 — $0632 = 0. */
