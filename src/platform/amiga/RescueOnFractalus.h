@@ -75,7 +75,7 @@ public:
     void tunnelPaintBegin();     // arm the FORWARD ring painter + prime tunnelBitmap (before the pre-draw)
     void planetNativeBegin();
     void planetNativeColumn(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
-                            uint8_t newLo, uint8_t newHi, uint8_t advanceHi);
+                            uint8_t newLo, uint8_t newHi, uint16_t advance);
     void planetNativeEnd();
     void decodeScannerBlinkCells(); // LR-scanner (#13) close-range blink cells $33DF/$33E0 -> cockpit
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
@@ -287,7 +287,7 @@ private:
     unsigned char bandMiddleOr() const;   // OR of the band rows' middle columns, all 3 planes
 #endif
     void decodeViewportRows(uint16_t srcBase, int stride, int rStart, int rEnd, bool countGroups); // the row-range half of renderViewportModeD (also seeds the band at the stars entry)
-    void renderPlanetNative();   // enhanced terrain: changed native planet rows -> viewport planes
+    void paintPlanetNative();    // enhanced terrain: this frame's planet bars -> viewport planes, at 1x1
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
 
     // Static-Standby fixed copper list (built once, poked in place — see

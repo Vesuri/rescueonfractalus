@@ -2139,7 +2139,7 @@ volatile unsigned long g_planetRowLo = 9999, g_planetRowHi = 0;
  * overhead and keeps the old decode path byte-for-byte. */
 extern void platform_planet_frame_begin(void);
 extern void platform_planet_column(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
-                                   uint8_t newLo, uint8_t newHi, uint8_t advanceHi);
+                                   uint8_t newLo, uint8_t newHi, uint16_t advance);
 extern void platform_planet_frame_end(void);
 #endif
 
@@ -2233,7 +2233,9 @@ static void update_object_distance_core(uint8_t slot,
     mem[MEM_obj_pos_table + 1 + slot] = newHi;      /* $08A5[slot] = distance hi */
 #ifdef ROF_PLATFORM_AMIGA
     if (g_flightEnhancedTerrain)
-        platform_planet_column(slot, distLo, distHi, newLo, newHi, mem[MEM_obj_advance_hi]);
+        platform_planet_column(slot, distLo, distHi, newLo, newHi,
+                               (uint16_t)(((uint16_t)mem[MEM_obj_advance_hi] << 8)
+                                          | mem[MEM_obj_advance_lo]));
 #endif
 
     /* The mem[$0084]/mem[$00B8] writes below are the 6502's faithful scratch side-effects (the

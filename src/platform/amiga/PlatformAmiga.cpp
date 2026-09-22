@@ -1530,9 +1530,9 @@ extern "C" void platform_planet_frame_begin(void)
 }
 
 extern "C" void platform_planet_column(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
-                                        uint8_t newLo, uint8_t newHi, uint8_t advanceHi)
+                                        uint8_t newLo, uint8_t newHi, uint16_t advance)
 {
-    if (s_scene) s_scene->planetNativeColumn(slot, oldLo, oldHi, newLo, newHi, advanceHi);
+    if (s_scene) s_scene->planetNativeColumn(slot, oldLo, oldHi, newLo, newHi, advance);
 }
 
 extern "C" void platform_planet_frame_end(void)

@@ -3918,6 +3918,138 @@ void RescueOnFractalus::decodeBoostStars()
 #endif
 }
 
+// ---- Enhanced Terrain: native-resolution planet bars -----------------------------------------
+// The faithful planet marker is 22 vertical bars (draw_vline_pair) plotted into the mode-D field
+// at mem[$1000].  One bar is one source BYTE wide -- 4 mode-D cells = 8 lores Amiga pixels -- and
+// its three stacked fills ($FF body, $AA rim, $55 highlight) start and end on whole SOURCE rows,
+// so the ordinary decode shows the planet limb as an 8x2 staircase.
+//
+// Enhanced Terrain leaves mem[$1000] authoritative for game state and paints the bars itself at
+// one-pixel granularity: the two 16-bit distances bounding a bar are interpolated across its 8
+// pixels, and >>7 instead of >>8 keeps the distance bit the source row index throws away.
+//
+// The painter writes the PLANES directly.  There is no chunky intermediate and no conversion
+// pass: a bar is walked column-major and composes one byte per plane per row, so the per-frame
+// cost is the bar band's own area (~4*advance+4 rows x 40 bytes) instead of a full-width
+// re-encode of every touched row.  The accumulated image lives in the bitmap itself -- the bars
+// only ever add to a shape that grows upwards, so whatever the ordinary decode left in the planes
+// is already the correct seed and no seeding pass is needed either.  Source rows >= $2B pack two
+// bars into one byte ($C0 via plot2bpp_lut) and stay with decodeViewportRows.
+namespace {
+// One bar's frame inputs, captured from the faithful writer (update_object_distance_core).
+struct PlanetColumnSample {
+    uint16_t oldDistance;   // $08A5:$08A4 before this frame's advance
+    uint16_t newDistance;   // and after it
+    uint16_t advance;       // $08D3:$08D2, the accumulated approach offset (rim/highlight depth)
+    uint8_t  valid;
+};
+static PlanetColumnSample s_planetColumn[22];
+static bool s_planetPaintPending   = false;   // samples captured, not yet painted
+static bool s_planetPainterOwnsRows = false;  // rows 0..85 are the painter's; keep the decode off them
+static short s_prevAa[22];                    // last frame's rim top: the incremental paint's floor
+static bool s_planetHavePrev = false;
+
+// Fill rows [y0,y1] of one bar and its mirror with one pen.  A bar is one source byte = 8 lores
+// pixels = one byte-aligned bitplane byte, and the faithful draw_vline_pair fills it uniformly, so
+// every write is a whole-byte store: no read-modify-write, and the mirror byte is the same value.
+static void planetFill(uint8_t* base, int bx, int rx, int y0, int y1, uint8_t p0, uint8_t p1)
+{
+    if (y0 < 0) y0 = 0;
+    if (y1 > ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS - 1) y1 = ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS - 1;
+    if (y0 > y1) return;
+    uint8_t* row = base + rof_mulu16((uint16_t)y0, (uint16_t)ROF_FLIGHT_ROW_STRIDE);
+    for (int y = y0; y <= y1; y++, row += ROF_FLIGHT_ROW_STRIDE) {
+        row[bx] = p0; row[bx + ROF_FLIGHT_PLANE_ROW_BYTES] = p1;
+        row[rx] = p0; row[rx + ROF_FLIGHT_PLANE_ROW_BYTES] = p1;
+    }
+}
+}
+
+void RescueOnFractalus::planetNativeBegin()
+{
+    if (!g_flightEnhancedTerrain || !viewportBitmap) return;
+    for (int i = 0; i < 22; i++) s_planetColumn[i].valid = 0;
+    s_planetPaintPending = false;
+}
+
+void RescueOnFractalus::planetNativeColumn(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
+                                           uint8_t newLo, uint8_t newHi, uint16_t advance)
+{
+    if (!g_flightEnhancedTerrain || !viewportBitmap) return;
+    const unsigned i = slot >> 1;
+    if (i >= 22) return;
+    s_planetColumn[i].oldDistance = (uint16_t)(((uint16_t)oldHi << 8) | oldLo);
+    s_planetColumn[i].newDistance = (uint16_t)(((uint16_t)newHi << 8) | newLo);
+    s_planetColumn[i].advance     = advance;
+    s_planetColumn[i].valid       = 1;
+}
+
+void RescueOnFractalus::planetNativeEnd()
+{
+    if (!g_flightEnhancedTerrain || !viewportBitmap) return;
+    // Paint at render time, alongside the frame's other CHIP writes, rather than from inside the
+    // 6502 flow: the viewport bitmap is single-buffered and this keeps one write point for it.
+    s_planetPaintPending = true;
+}
+
+// paintPlanetNative: this frame's 22 planet marker bars, straight into the viewport bitplanes at
+// one-pixel vertical resolution.
+//
+// The faithful marker ($6BED update_object_distance -> $6C4D draw_vline_pair) stacks three fills
+// down one field column and its mirror: $FF body from the new distance row to the old one, $AA rim
+// from there up by the accumulated approach offset, then a one-row $55 highlight above that.  Each
+// fill is whole SOURCE rows, so the 2x2 decode can only move an edge two screen pixels at a time.
+// Here the same three spans are derived from the raw 16-bit distances (>>7 instead of >>8), which
+// is the viewport's own row resolution, and painted as bitplane bytes.
+//
+// Two properties make this nearly free, and both are the faithful shape rather than shortcuts:
+//   - one bar is exactly one byte-aligned bitplane byte, filled uniformly, so a span is a run of
+//     whole-byte stores and the mirror column takes the same byte;
+//   - the marker only grows UPWARDS over a field the previous frame already painted, so all that
+//     changes is the new rim at the top, the highlight above it, and the two body rows at the
+//     bottom edge.  The rim's interior is already the right colour and is not touched.
+// The planes left by the ordinary 2x2 decode are a valid seed, so there is no seeding pass; the
+// first paint after the painter takes the rows draws each bar's full extent instead.
+void RescueOnFractalus::paintPlanetNative()
+{
+    uint8_t* const base = (uint8_t*)viewportBitmap->data;
+
+    // Slots 2..21 are the 20 bars of the visible left half; 0 and 1 fall outside the +4 crop.
+    for (int i = 2; i < 22; i++) {
+        const PlanetColumnSample& a = s_planetColumn[i];
+        if (!a.valid) return;                   // the 22 samples are one atomic frame
+
+        // $2F/$2E is the faithful start-row clamp; the rest is update_object_distance_core's own
+        // arithmetic, read one bit finer.  The advance is the 16-bit $08D3:$08D2 accumulator: its
+        // HIGH byte alone (whole source rows) would step the rim top two pixels at a time.
+        const int oldY = ((a.oldDistance >> 8) < 0x2f) ? (int)(a.oldDistance >> 7) : 92;
+        const int newY = (int)(a.newDistance >> 7);
+        int aaY = newY - (int)(a.advance >> 7); if (aaY < 0) aaY = 0;
+
+        // Faithful gating: the body fill always draws; the rim and the highlight are dropped when
+        // the start row underflowed, and the highlight also needs its own end row above the $2B
+        // bar cut-off (draw #3's `row < $2B` on row = endRow-1, endRow = aaY>>1).
+        const bool rim = (a.oldDistance >> 8) != 0;
+        const bool hl  = rim && aaY >= 2 && (aaY >> 1) < 0x2c;
+
+        const int bx = i - 2;                   // left byte column of the 40 displayed
+        const int rx = 41 - i;                  // its mirror
+
+        if (!s_planetHavePrev || !rim || aaY > s_prevAa[i]) {
+            // No usable previous frame (or the bar receded): the whole extent, rim over body.
+            planetFill(base, bx, rx, newY, oldY + 1, 0xFF, 0xFF);
+            if (rim) planetFill(base, bx, rx, aaY, oldY - 1, 0x00, 0xFF);
+        } else {
+            // Incremental: the new rim rows, then the body edge the rim covered last frame.
+            planetFill(base, bx, rx, aaY, s_prevAa[i] - 1, 0x00, 0xFF);
+            planetFill(base, bx, rx, oldY, oldY + 1, 0xFF, 0xFF);
+        }
+        if (hl) planetFill(base, bx, rx, aaY - 2, aaY - 1, 0xFF, 0x00);
+        s_prevAa[i] = (short)aaY;
+    }
+    s_planetHavePrev = true;
+}
+
 // renderViewportModeD: decode the stars/planet viewport buffer mem[$1000] as an
 // ANTIC mode-D field into viewportBitmap (the DEDICATED planet buffer, NOT flight's
 // shared terrainBitmap).  Layout (verified vs launch_5_planet.a8s
@@ -3930,199 +4062,6 @@ void RescueOnFractalus::decodeBoostStars()
 // double-buffer halves; offset 0 is the displayed half) LMS'd from $1070 (= the
 // $1010 row-addr base + one off-screen scroll-margin row).  The +4 crop centres
 // the displayed 40 of 48 either way.
-namespace {
-enum { kPlanetNativeRowBytes = ROF_FLIGHT_PHYSICAL_WIDTH / 4 };
-struct PlanetColumnSample {
-    uint16_t oldDistance;
-    uint16_t newDistance;
-    uint8_t advanceHi;
-    uint8_t valid;
-};
-
-static uint8_t s_planetNative[ROF_FLIGHT_PHYSICAL_ROWS * kPlanetNativeRowBytes];
-static uint8_t s_planetNativeDirty[ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS];
-static uint8_t s_planetNibbleP1[256], s_planetNibbleP2[256];
-static PlanetColumnSample s_planetColumn[22];
-static bool s_planetNativeActive = false;
-static bool s_planetNativeLutReady = false;
-
-static void buildPlanetNativeLut()
-{
-    if (s_planetNativeLutReady) return;
-    for (unsigned v = 0; v < 256; ++v) {
-        uint8_t p1 = 0, p2 = 0;
-        for (int p = 0; p < 4; ++p) {
-            const uint8_t c = (uint8_t)((v >> (6 - 2 * p)) & 3u);
-            p1 |= (uint8_t)((c & 1u) << (3 - p));
-            p2 |= (uint8_t)(((c >> 1) & 1u) << (3 - p));
-        }
-        s_planetNibbleP1[v] = p1;
-        s_planetNibbleP2[v] = p2;
-    }
-    s_planetNativeLutReady = true;
-}
-
-static inline __attribute__((always_inline)) int planetLerp8(int a, int b, int step)
-{
-    /* step is exactly 0..7.  Spell the eighths as additions/shifts: an int multiply becomes a
-     * 32-bit __mulsi3 call with this compiler, which is catastrophic in this inner loop. */
-    const int d = b - a;
-    switch (step) {
-        case 0: return a;
-        case 1: return a + (d >> 3);
-        case 2: return a + (d >> 2);
-        case 3: return a + ((d + d + d) >> 3);
-        case 4: return a + (d >> 1);
-        case 5: return a + ((d + d + d + d + d) >> 3);
-        case 6: return a + ((d + d + d) >> 2);
-        default:return a + ((d + d + d + d + d + d + d) >> 3);
-    }
-}
-
-static uint8_t reversePlanetPixels(uint8_t v)
-{
-    return (uint8_t)(((v & 0xc0u) >> 6) | ((v & 0x30u) >> 2) |
-                     ((v & 0x0cu) << 2) | ((v & 0x03u) << 6));
-}
-}
-
-void RescueOnFractalus::planetNativeBegin()
-{
-    if (!g_flightEnhancedTerrain || !viewportBitmap) return;
-    buildPlanetNativeLut();
-    if (!s_planetNativeActive) {
-        /* Seed the native buffer from the live mode-D field once.  This is a storage conversion,
-         * not a visual filter: each original cell occupies its exact 2x2 display footprint until
-         * the original planet algorithm supplies sub-pixel boundaries for it. */
-        const uint8_t* src = (const uint8_t*)&mem[0x1004];
-        for (int r = 0; r < ROF_FLIGHT_SOURCE_ROWS; ++r, src += 48) {
-            uint8_t* d0 = s_planetNative + (r * 2) * kPlanetNativeRowBytes;
-            uint8_t* d1 = d0 + kPlanetNativeRowBytes;
-            for (int b = 0; b < 40; ++b) {
-                const uint8_t v = src[b];
-                const uint8_t p0 = (uint8_t)((v >> 6) & 3u), p1 = (uint8_t)((v >> 4) & 3u);
-                const uint8_t p2 = (uint8_t)((v >> 2) & 3u), p3 = (uint8_t)(v & 3u);
-                const uint8_t a = (uint8_t)((p0 << 6) | (p0 << 4) | (p1 << 2) | p1);
-                const uint8_t c = (uint8_t)((p2 << 6) | (p2 << 4) | (p3 << 2) | p3);
-                d0[b * 2] = d1[b * 2] = a;
-                d0[b * 2 + 1] = d1[b * 2 + 1] = c;
-            }
-        }
-        s_planetNativeActive = true;
-    }
-    for (int i = 0; i < 22; ++i) s_planetColumn[i].valid = 0;
-}
-
-void RescueOnFractalus::planetNativeColumn(uint8_t slot, uint8_t oldLo, uint8_t oldHi,
-                                            uint8_t newLo, uint8_t newHi, uint8_t advanceHi)
-{
-    if (!g_flightEnhancedTerrain || !s_planetNativeActive) return;
-    const unsigned i = slot >> 1;
-    if (i >= 22) return;
-    s_planetColumn[i].oldDistance = (uint16_t)(((uint16_t)oldHi << 8) | oldLo);
-    s_planetColumn[i].newDistance = (uint16_t)(((uint16_t)newHi << 8) | newLo);
-    s_planetColumn[i].advanceHi = advanceHi;
-    s_planetColumn[i].valid = 1;
-}
-
-void RescueOnFractalus::planetNativeEnd()
-{
-    if (!g_flightEnhancedTerrain || !s_planetNativeActive) return;
-    /* Slots 2..21 are the 20 visible eight-pixel strips on the left.  Interpolate each original
-     * distance boundary across its strip, then mirror it, retaining the original three overdraws
-     * (FF body, AA rim, 55 highlight).  Distances are 8.8 fixed-point: >>7 exposes their next bit
-     * as the odd physical scanline, which is the vertical precision the old high-byte writer lost. */
-    /* Work in the packed buffer's natural four-pixel unit.  The first implementation issued six
-     * function calls per X and revisited the same bytes for the body, rim and highlight; near the
-     * end of the zoom that became tens of thousands of read/modify/writes.  Resolve the final
-     * overdraw colour of all four pixels here and touch each packed byte at most once per row. */
-    for (int byteX = 0; byteX < 40; ++byteX) {
-        int oldY[4], newY[4], aaY[4];
-        uint8_t drawRim[4], drawHighlight[4];
-        int yLo = ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS, yHi = -1;
-        for (int p = 0; p < 4; ++p) {
-            const int x = byteX * 4 + p;
-            const int i = 2 + (x >> 3);
-            const int sx = x & 7;
-            const PlanetColumnSample& a = s_planetColumn[i];
-            const PlanetColumnSample& b = s_planetColumn[(i < 21) ? i + 1 : i];
-            if (!a.valid || !b.valid) return;  // all 22 samples are an atomic frame
-            const int aOld = (a.oldDistance >> 8) < 0x2f ? (a.oldDistance >> 7) : 92;
-            const int bOld = (b.oldDistance >> 8) < 0x2f ? (b.oldDistance >> 7) : 92;
-            const int aNew = a.newDistance >> 7, bNew = b.newDistance >> 7;
-            int aAa = aNew - ((int)a.advanceHi << 1);
-            int bAa = bNew - ((int)b.advanceHi << 1);
-            if (aAa < 0) aAa = 0;
-            if (bAa < 0) bAa = 0;
-            oldY[p] = planetLerp8(aOld, bOld, sx);
-            newY[p] = planetLerp8(aNew, bNew, sx);
-            aaY[p]  = planetLerp8(aAa, bAa, sx);
-            drawRim[p] = (uint8_t)((a.oldDistance >> 8) != 0);
-            drawHighlight[p] = (uint8_t)(((aaY[p] >> 1) < 0x2b) && aaY[p] >= 2);
-            int lo = newY[p];
-            if (drawRim[p] && aaY[p] < lo) lo = aaY[p];
-            if (drawHighlight[p] && aaY[p] - 2 < lo) lo = aaY[p] - 2;
-            if (lo < yLo) yLo = lo;
-            if (oldY[p] + 1 > yHi) yHi = oldY[p] + 1;
-            if (drawHighlight[p] && aaY[p] - 1 > yHi) yHi = aaY[p] - 1;
-        }
-        if (yLo < 0) yLo = 0;
-        if (yHi >= ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS)
-            yHi = ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS - 1;
-        for (int y = yLo; y <= yHi; ++y) {
-            uint8_t mask = 0, value = 0;
-            for (int p = 0; p < 4; ++p) {
-                int colour = -1;
-                if (y >= newY[p] && y <= oldY[p] + 1) colour = 3;
-                if (drawRim[p] && y >= aaY[p] && y <= oldY[p] - 1) colour = 2;
-                if (drawHighlight[p] && y >= aaY[p] - 2 && y <= aaY[p] - 1) colour = 1;
-                if (colour >= 0) {
-                    const unsigned shift = (unsigned)(3 - p) * 2u;
-                    mask  |= (uint8_t)(3u << shift);
-                    value |= (uint8_t)((unsigned)colour << shift);
-                }
-            }
-            if (!mask) continue;
-            uint8_t* const left = s_planetNative + y * kPlanetNativeRowBytes + byteX;
-            const uint8_t l = (uint8_t)((*left & (uint8_t)~mask) | value);
-            const uint8_t rmask = reversePlanetPixels(mask);
-            const uint8_t rvalue = reversePlanetPixels(value);
-            uint8_t* const right = s_planetNative + y * kPlanetNativeRowBytes + (79 - byteX);
-            const uint8_t r = (uint8_t)((*right & (uint8_t)~rmask) | rvalue);
-            if (l != *left || r != *right) {
-                *left = l; *right = r;
-                s_planetNativeDirty[y] = 1;
-            }
-        }
-    }
-}
-
-void RescueOnFractalus::renderPlanetNative()
-{
-    if (!viewportBitmap || !s_planetNativeActive) return;
-    buildPlanetNativeLut();
-    uint8_t* const dst = (uint8_t*)viewportBitmap->data;
-    for (int y = 0; y < ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS; ++y) {
-        if (!s_planetNativeDirty[y]) continue;
-        s_planetNativeDirty[y] = 0;
-        const uint8_t* s = s_planetNative + y * kPlanetNativeRowBytes;
-        uint8_t* p1 = dst + y * ROF_FLIGHT_ROW_STRIDE;
-        uint8_t* p2 = p1 + ROF_FLIGHT_PLANE_ROW_BYTES;
-        uint32_t* q1 = (uint32_t*)p1;
-        uint32_t* q2 = (uint32_t*)p2;
-        for (int group = 0; group < 10; ++group) {
-            uint32_t o1 = 0, o2 = 0;
-            for (int b = 0; b < 4; ++b) {
-                const uint8_t a = *s++, c = *s++;
-                o1 = (o1 << 8) | (uint8_t)((s_planetNibbleP1[a] << 4) | s_planetNibbleP1[c]);
-                o2 = (o2 << 8) | (uint8_t)((s_planetNibbleP2[a] << 4) | s_planetNibbleP2[c]);
-            }
-            *q1++ = o1;
-            *q2++ = o2;
-        }
-    }
-}
-
 void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int rows)
 {
 #ifdef ROF_FLIGHT_PROBE
@@ -4140,19 +4079,28 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     if (!viewportBitmap) return;
 
     extern volatile unsigned long g_planetRowLo, g_planetRowHi;
-    if (srcBase == 0x1000u && g_flightEnhancedTerrain &&
-        (viewportForceFull || srcBase != viewportLastBase)) {
-        s_planetNativeActive = false;
-        for (int y = 0; y < ROF_FLIGHT_PHYSICAL_TERRAIN_ROWS; ++y)
-            s_planetNativeDirty[y] = 0;
-    }
-    if (srcBase == 0x1000u && g_flightEnhancedTerrain && s_planetNativeActive) {
-        renderPlanetNative();
-        const int bandHi = (int)g_planetRowHi;
-        g_planetRowLo = 9999; g_planetRowHi = 0;
-        if (bandHi >= ROF_FLIGHT_SOURCE_TERRAIN_ROWS)
-            decodeViewportRows(srcBase, stride, ROF_FLIGHT_SOURCE_TERRAIN_ROWS, rows - 1, false);
-        return;
+    // Enhanced Terrain paints the planet bars into rows 0..85 itself (paintPlanetNative), so the
+    // mem[] decode must stay off those rows for as long as that image stands.  A full (re)decode
+    // is the one thing that takes them back: it repaints the whole field from mem[], which is the
+    // faithful 2x2 version of the same accumulated shape and therefore a valid reseed.
+    if (srcBase == 0x1000u && g_flightEnhancedTerrain) {
+        if (viewportForceFull || srcBase != viewportLastBase) {
+            s_planetPaintPending    = false;
+            s_planetPainterOwnsRows = false;
+            s_planetHavePrev        = false;   // the decode is about to rewrite the rows
+        } else if (s_planetPaintPending || s_planetPainterOwnsRows) {
+            if (s_planetPaintPending) {
+                s_planetPaintPending    = false;
+                s_planetPainterOwnsRows = true;
+                paintPlanetNative();
+            }
+            // Source rows >= $2B are the $C0-packed bar tails; the painter does not do those.
+            const int bandHi = (int)g_planetRowHi;
+            g_planetRowLo = 9999; g_planetRowHi = 0;
+            if (bandHi >= ROF_FLIGHT_SOURCE_TERRAIN_ROWS)
+                decodeViewportRows(srcBase, stride, ROF_FLIGHT_SOURCE_TERRAIN_ROWS, rows - 1, false);
+            return;
+        }
     }
 
     // The original path writes each mode-D row to ONE interleaved scanline and the copper
