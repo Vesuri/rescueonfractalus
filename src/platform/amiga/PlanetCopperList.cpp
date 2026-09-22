@@ -35,8 +35,8 @@ static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (starfield)
 static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
-// d[0] = copperWait(16,0) (CopperList ctor).  The line-doubling band is 85 rows ×
-// (WAIT + BPL1MOD + BPL2MOD) = 255 words (rows 1..kTerrainHeight-1; row 0's modulo
+// d[0] = copperWait(16,0) (CopperList ctor). The per-line viewport program is 93 rows ×
+// (WAIT + BPL1MOD + BPL2MOD), plus the band-boundary words (rows 1..93; row 0's modulo
 // is INDEX_VP_MOD0).
 #define INDEX_PLAYFIELD       1                            // setPlayfield: 3
 #define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)        // BPLCON2 PFxP=1 (game GPRIOR=$14) (1)
@@ -54,7 +54,7 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 41: color00..03 (4)
 #define INDEX_VP_MOD0         (INDEX_VP_PAL + 4)           // 45: row-0 bpl1mod,bpl2mod (2)
 #define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 47: 93 × (WAIT+2 mod), +2 band palette
-// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172) it
+// The per-line loop runs k=1..kViewportHeight-1. At k==kTerrainHeight (scanline 172) it
 // mirrors the band DLI $6D67, which writes ONLY COLPF0/COLPF1 (the two greys) and leaves COLBK
 // and COLPF2 untouched.  So we emit exactly those two MOVEs (color01/color02) and nothing else
 // — color00 (COLBK) and color03 (COLPF2=$2A planet) stay the viewport's values, as on the Atari.
@@ -100,6 +100,7 @@ PlanetCopperList::PlanetCopperList()
 
 void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                                      const Bitmap& bandPlane4,
+                                     bool nativeViewport,
                                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
                                      Sprite* const star[6])
 {
@@ -150,7 +151,7 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
         d[INDEX_BAND_BPL4 + 0] = d[INDEX_BAND_BPL4 + 1] = copperMove(0x1FE, 0);
     }
 
-    // ---- viewport region: WAIT, pointers, 2bp->3bp, palette, line-doubling band ----
+    // ---- viewport region: WAIT, pointers, 2bp->3bp, palette, per-line modulo program ----
     d[INDEX_VP_WAIT] = copperWait(kTerrainLine - 1, 0xE0);
     showBitmap(INDEX_VP_BPL, terrain);         // 3bp interleaved = 6 ptr moves
     d[INDEX_VP_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
@@ -160,12 +161,12 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_VP_PAL + 1] = copperMove(color01, atariToOCS(0x24));
     d[INDEX_VP_PAL + 2] = copperMove(color02, atariToOCS(0x28));
     d[INDEX_VP_PAL + 3] = copperMove(color03, atariToOCS(0x2A));
-    // Line doubling: each 120-byte interleaved row is shown on 2 scanlines by toggling
-    // the bitplane modulo at end-of-line — -40 rewinds plane1 to repeat the row, +80
-    // advances to the next.  Row 0's -40 is set here; rows 1..kTerrainHeight-1 alternate
-    // +80 (odd) / -40 (even) at each line's H-blank.  Constant every frame.
-    d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, (uint16_t)-40);
-    d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, (uint16_t)-40);
+    // Faithful mode line-doubles 47 source rows: -40 repeats a row, +80 advances the
+    // interleaved pointer to the next one.  Native terrain mode instead displays the 94
+    // pre-expanded physical rows, so +80 advances on every scanline.
+    const uint16_t firstModulo = nativeViewport ? (uint16_t)80 : (uint16_t)-40;
+    d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, firstModulo);
+    d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, firstModulo);
     uint32_t idx = INDEX_VP_LINEDOUBLE;
     for (uint16_t k = 1; k < kViewportHeight; k++) {
         d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1),
@@ -205,7 +206,8 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
         // line-179 handoff; holding BPL4 preserves the dashboard-row pointer loaded above.
         const uint16_t v = (cockpit.bitplanes == 4 && k == kViewportHeight - 1)
             ? (uint16_t)-40
-            : ((k & 1) ? (uint16_t)80 : (uint16_t)-40);
+            : (nativeViewport ? (uint16_t)80
+                              : ((k & 1) ? (uint16_t)80 : (uint16_t)-40));
         d[idx++] = copperMove(bpl1mod, v);
         d[idx++] = copperMove(bpl2mod, v);
     }

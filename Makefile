@@ -159,6 +159,7 @@ HOSTPROOF_SELF := \
     native_resolution_test \
     palette_interpolation_test \
     palette_resolution_test \
+    planet_scale2x_test \
     native_skyline_test \
     tunnel_batch_test \
     ras_fused_midpoint_test \
