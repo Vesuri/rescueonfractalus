@@ -1256,17 +1256,12 @@ void RescueOnFractalus::buildFlightFrameSprites()
     uint16_t* rp = flRightPost->data() + 2;   // ch2: right wedge inner 16px, band rows 86..93
     uint16_t* rt = flRightTri->data()  + 2;   // ch3: right wedge outer 16px, rows 0..7
     for (int i = 0; i < 8; i++) {             // 8 band scanlines (172-179)
-        // In the enhanced cockpit the band edge advances at native scanline precision.  Advance
-        // the dark wedge by one source row to keep its widening steps against that edge instead
-        // of leaving a one-pixel black seam.  Clamp the last row so the wedge still fills all
-        // eight band scanlines.  Faithful mode retains the exact ROM row sequence.
-        const int sourceRow = (g_enhancedGraphics && i < 7) ? i + 1 : i;
         // 32px field per side (two 16px sprites).  Measured vs the Atari, both triangles sat
         // 2px too far toward screen-centre, so nudge each 2px OUTWARD in the data (sprites
         // stay put — flLeftPost/flRightPost also carry the correctly-placed A-pillar, so their
         // X can't move): left field shifts left (<<2), right field shifts right (>>2).
-        const uint32_t Lf = expandWedge32(mem[0x4DD2 + sourceRow]) << 2; // left, 2px outward
-        const uint32_t Rf = expandWedge32(mem[0x4DDA + sourceRow]) >> 2; // right, 2px outward
+        const uint32_t Lf = expandWedge32(mem[0x4DD2 + i]) << 2;   // left  wedge, 2px left
+        const uint32_t Rf = expandWedge32(mem[0x4DDA + i]) >> 2;   // right wedge, 2px right
         const int lr = (int)kTerrainHeight + i;   // post-sprite band row = 86 + i
         // Triangles go on the sprites' SECOND bitplane (pen 10) -> darker grey COLOR18/COLOR22,
         // distinct from the A-pillars on plane 0 (pen 01).  Plane 0 stays 0 in the band rows.
