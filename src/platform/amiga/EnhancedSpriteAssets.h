@@ -17,20 +17,22 @@ static const uint16_t kEnhancedLogoSparkle[15] = {
     0x0100, 0x0100, 0x0100, 0x0100, 0x0100
 };
 
+// Keep the travelling torpedo faithful for now, but retain independent native-resolution assets
+// so enhanced artwork can be authored later without changing the ROM-backed rendering path.
 static const uint16_t kEnhancedTorpedo0[] = {
-    0x00C0, 0x01E0, 0x03F0, 0x0FFC, 0x3FFF
+    0x00C0, 0x03F0, 0x03F0, 0x0FFC, 0x3FFF
 };
 static const uint16_t kEnhancedTorpedo2[] = {
-    0x00C0, 0x01E0, 0x03F0, 0x07F8, 0x0FFC, 0x0FFC, 0x0FFC,
-    0x0FFC, 0x0FFC, 0x0FFC, 0x0FFC, 0x07F8, 0x03F0, 0x01E0
+    0x00C0, 0x03F0, 0x0FFC, 0x0FFC, 0x0FFC, 0x0FFC, 0x0FFC,
+    0x0FFC, 0x0FFC, 0x0FFC, 0x0FFC, 0x0FFC, 0x0FFC, 0x03F0
 };
 static const uint16_t kEnhancedTorpedo3[] = {
-    0x00C0, 0x01E0, 0x03F0, 0x03F0, 0x01E0, 0x00C0
+    0x00C0, 0x03F0, 0x03F0, 0x03F0, 0x03F0, 0x03F0
 };
-static const uint16_t kEnhancedTorpedo4[] = { 0x00C0, 0x01E0, 0x01E0, 0x00C0 };
-static const uint16_t kEnhancedTorpedo5[] = { 0x0080, 0x00C0, 0x0080 };
-static const uint16_t kEnhancedTorpedo6[] = { 0x00C0, 0x0080 };
-static const uint16_t kEnhancedTorpedo7[] = { 0x0080 };
+static const uint16_t kEnhancedTorpedo4[] = { 0x00F0, 0x00F0, 0x00F0, 0x00F0 };
+static const uint16_t kEnhancedTorpedo5[] = { 0x00C0, 0x00C0, 0x00C0 };
+static const uint16_t kEnhancedTorpedo6[] = { 0x00C0, 0x00C0 };
+static const uint16_t kEnhancedTorpedo7[] = { 0x00C0 };
 
 static const EnhancedSpriteAsset kEnhancedTorpedo[8] = {
     { kEnhancedTorpedo0, 5 }, { kEnhancedTorpedo0, 5 },
