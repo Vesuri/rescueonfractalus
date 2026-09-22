@@ -1451,8 +1451,8 @@ static inline uint16_t expandShotRow(uint8_t b) { return s_shotExpand[b]; }
 // distance group, followed by two tiny far views).  Atari's one-bit player cells are two Amiga
 // lores pixels wide, and SIZEP3 makes them 4/8 pixels wide at the close distances.  Expanding each
 // row independently therefore preserves the coarse stair-steps.  Enhanced Graphics instead reads
-// the COMPLETE selected ROM silhouette, recovers its four diamond vertices, and rasterises the
-// filled diamond directly at its final 16/32/64-pixel width.  One cache per SIZEP3 scale means this
+// the COMPLETE selected ROM silhouette, builds its convex filled outline, and rasterises it
+// directly at its final 16/32/64-pixel width.  One cache per SIZEP3 scale means this
 // work happens only when the selected ROM view changes, never for every displayed row/frame.
 static const int kEnhancedSaucerMaxRows = 24;
 struct EnhancedSaucerFrame {
@@ -1478,13 +1478,19 @@ static int currentSaucerShapeIndex()
     return (int)mem[MEM_player3_xbase] + 9 * group;
 }
 
-static int saucerLerp(int x0, int y0, int x1, int y1, int y)
+struct SaucerHullPoint { int8_t x, y; };
+
+static int32_t saucerCross(const SaucerHullPoint& o, const SaucerHullPoint& a,
+                           const SaucerHullPoint& b)
 {
-    const int16_t dy = (int16_t)(y1 - y0);
-    if (!dy) return x1;
-    int32_t n = rof_muls16((int16_t)(x1 - x0), (int16_t)(y - y0));
-    n += (n >= 0) ? dy / 2 : -(dy / 2);         // nearest pixel, not a coarse source-cell edge
-    return x0 + rof_divs16(n, dy);
+    return rof_muls16((int16_t)(a.x - o.x), (int16_t)(b.y - o.y))
+         - rof_muls16((int16_t)(a.y - o.y), (int16_t)(b.x - o.x));
+}
+
+static uint16_t saucerDistance2(const SaucerHullPoint& a, const SaucerHullPoint& b)
+{
+    const int16_t dx = (int16_t)(a.x - b.x), dy = (int16_t)(a.y - b.y);
+    return (uint16_t)(rof_muls16(dx, dx) + rof_muls16(dy, dy));
 }
 
 static const EnhancedSaucerFrame* enhancedSaucerFrame(int scale)
@@ -1499,7 +1505,7 @@ static const EnhancedSaucerFrame* enhancedSaucerFrame(int scale)
     const uint16_t ptr = ROF_PAIR16(mem[0x4D3E + shapeIndex * 2],
                                     mem[0x4D3F + shapeIndex * 2]);
     uint8_t left[kEnhancedSaucerMaxRows], right[kEnhancedSaucerMaxRows];
-    int rows = 0, minLeft = 8, maxRight = -1;
+    int rows = 0;
     while (rows < kEnhancedSaucerMaxRows) {
         const uint8_t bits = mem[(uint16_t)(ptr + rows)];
         if (!bits) break;
@@ -1507,36 +1513,68 @@ static const EnhancedSaucerFrame* enhancedSaucerFrame(int scale)
         while (!(bits & (uint8_t)(0x80u >> l))) l++;
         while (!(bits & (uint8_t)(0x80u >> r))) r--;
         left[rows] = (uint8_t)l; right[rows] = (uint8_t)r;
-        if (l < minLeft) minLeft = l;
-        if (r > maxRight) maxRight = r;
         rows++;
     }
     if (!rows || (rows == kEnhancedSaucerMaxRows && mem[(uint16_t)(ptr + rows)] != 0)) return nullptr;
 
-    int leftYSum = 0, leftYCount = 0, rightYSum = 0, rightYCount = 0;
+    // Treat every ROM row as a filled interval, including rows such as $D0 whose interior hole is
+    // only an artefact of the Atari's coarse horizontal sampling.  The convex hull of these cell
+    // rectangles is the complete tilted diamond.  Unlike the old T/L/R/B assumption, this keeps a
+    // broad horizontal top or bottom edge when the banked ROM view genuinely has one.
+    SaucerHullPoint point[kEnhancedSaucerMaxRows * 4];
+    int pointCount = 0;
     for (int y = 0; y < rows; y++) {
-        if (left[y] == minLeft)  { leftYSum += y;  leftYCount++; }
-        if (right[y] == maxRight) { rightYSum += y; rightYCount++; }
+        const int l = left[y], r = right[y] + 1;
+        point[pointCount++] = SaucerHullPoint{ (int8_t)l, (int8_t)y };
+        point[pointCount++] = SaucerHullPoint{ (int8_t)r, (int8_t)y };
+        point[pointCount++] = SaucerHullPoint{ (int8_t)l, (int8_t)(y + 1) };
+        point[pointCount++] = SaucerHullPoint{ (int8_t)r, (int8_t)(y + 1) };
     }
-    const int leftY = rof_divu16((uint16_t)(leftYSum + leftYCount / 2),
-                                  (uint16_t)leftYCount);
-    const int rightY = rof_divu16((uint16_t)(rightYSum + rightYCount / 2),
-                                   (uint16_t)rightYCount);
-    const uint16_t pixelsPerCell = (uint16_t)(scale << 1);
-    const int topX = (int)((rof_mulu16((uint16_t)(left[0] + right[0] + 1), pixelsPerCell) - 1) >> 1);
-    const int bottomX = (int)((rof_mulu16((uint16_t)(left[rows - 1] + right[rows - 1] + 1),
-                                          pixelsPerCell) - 1) >> 1);
-    const int leftX = (int)rof_mulu16((uint16_t)minLeft, pixelsPerCell);
-    const int rightX = (int)rof_mulu16((uint16_t)(maxRight + 1), pixelsPerCell) - 1;
+
+    SaucerHullPoint hull[kEnhancedSaucerMaxRows * 4];
+    int start = 0;
+    for (int i = 1; i < pointCount; i++)
+        if (point[i].x < point[start].x ||
+            (point[i].x == point[start].x && point[i].y < point[start].y)) start = i;
+    int current = start, hullCount = 0;
+    do {
+        hull[hullCount++] = point[current];
+        int next = -1;
+        for (int i = 0; i < pointCount; i++) {
+            if (point[i].x == point[current].x && point[i].y == point[current].y) continue;
+            if (next < 0) { next = i; continue; }
+            const int32_t cross = saucerCross(point[current], point[next], point[i]);
+            if (cross < 0 || (cross == 0 && saucerDistance2(point[current], point[i]) >
+                                           saucerDistance2(point[current], point[next]))) next = i;
+        }
+        if (next < 0) break;
+        current = next;
+    } while ((point[current].x != point[start].x || point[current].y != point[start].y) &&
+             hullCount < kEnhancedSaucerMaxRows * 4);
+    if (hullCount < 3) return nullptr;
 
     for (int y = 0; y < kEnhancedSaucerMaxRows; y++)
         for (int s = 0; s < 4; s++) frame->segment[y][s] = 0;
+    const int16_t pixelsPerCell2 = (int16_t)(scale << 2); // doubled output coordinates
     for (int y = 0; y < rows; y++) {
-        int l = (y <= leftY) ? saucerLerp(topX, 0, leftX, leftY, y)
-                             : saucerLerp(leftX, leftY, bottomX, rows - 1, y);
-        int r = (y <= rightY) ? saucerLerp(topX, 0, rightX, rightY, y)
-                              : saucerLerp(rightX, rightY, bottomX, rows - 1, y);
-        if (l > r) { const int t = l; l = r; r = t; }
+        const int scanY2 = (y << 1) + 1;        // centre of this output row
+        int minX2 = 0x7FFF, maxX2 = -1;
+        for (int e = 0; e < hullCount; e++) {
+            const SaucerHullPoint& a = hull[e];
+            const SaucerHullPoint& b = hull[(e + 1 == hullCount) ? 0 : e + 1];
+            const int ay2 = a.y << 1, by2 = b.y << 1;
+            if (!((ay2 <= scanY2 && scanY2 < by2) || (by2 <= scanY2 && scanY2 < ay2))) continue;
+            const int16_t ax2 = (int16_t)rof_muls16((uint16_t)a.x, (uint16_t)pixelsPerCell2);
+            const int16_t bx2 = (int16_t)rof_muls16((uint16_t)b.x, (uint16_t)pixelsPerCell2);
+            const int16_t dy = (int16_t)(by2 - ay2);
+            const int x2 = ax2 + rof_divs16(rof_muls16((int16_t)(bx2 - ax2),
+                                                       (int16_t)(scanY2 - ay2)), dy);
+            if (x2 < minX2) minX2 = x2;
+            if (x2 > maxX2) maxX2 = x2;
+        }
+        if (maxX2 <= minX2) continue;
+        const int l = minX2 >> 1;
+        const int r = (maxX2 >> 1) - 1;
         for (int px = l; px <= r; px++)
             frame->segment[y][px >> 4] |= (uint16_t)(0x8000u >> (px & 15));
     }
