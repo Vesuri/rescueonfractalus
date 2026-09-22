@@ -1187,35 +1187,40 @@ static const uint16_t kSprXRight = 0x81 + 285;
 //
 // RLE format (rle_expand_list $757B): (count, value) byte pairs, 0x00 terminator.  Each
 // Atari player byte → 2 Amiga lores px via the kDoubleGlyph LUT (as the starfield maps).
-static void decodePostRLE(const uint8_t* tbl, uint16_t* dst)
+static void decodePostRLE(const uint8_t* tbl, uint16_t* dst, int enhancedDirection)
 {
     int row = 0;
     while (row < kHT) {
         uint8_t count = *tbl++;
         if (count == 0) break;                 // terminator
         uint16_t doubled = kDoubleGlyph[*tbl++];
-        uint16_t halfStep = doubled;
-        if (g_enhancedGraphics && tbl[0] != 0) {
-            const uint16_t next = kDoubleGlyph[tbl[1]];
-            // The authored pillar moves one Atari player bit (two Amiga pixels) at each RLE
-            // boundary.  Enhanced Graphics inserts the missing one-pixel position halfway
-            // through the run, retaining the same thickness, endpoints and total height.
-            if (next == (uint16_t)(doubled >> 2)) halfStep = (uint16_t)(doubled >> 1);
-            else if (next == (uint16_t)(doubled << 2)) halfStep = (uint16_t)(doubled << 1);
-        }
-        const uint8_t split = (uint8_t)((count + 1u) >> 1);
         for (uint8_t k = 0; k < count && row < kHT; k++, row++) {
-            dst[row * 2] = (g_enhancedGraphics && k >= split) ? halfStep : doubled;
+            dst[row * 2] = doubled;
             dst[row * 2 + 1] = 0x0000;
         }
     }
+    const int rows = row;
     for (; row < kHT; row++) { dst[row * 2] = 0x0000; dst[row * 2 + 1] = 0x0000; }
+
+    if (g_enhancedGraphics && rows != 0) {
+        // Keep the authored bottom endpoint fixed, then walk upward one native Amiga pixel
+        // every seven rows.  The Atari RLE changes by two pixels every fourteen rows; deriving
+        // the enhanced shape from its bottom row also handles the two eight-row end runs without
+        // moving the lower endpoint or introducing an uneven first/last half-step.
+        const uint16_t bottom = dst[(rows - 1) * 2];
+        for (int r = rows - 1; r >= 0; r--) {
+            const unsigned shift = (unsigned)(rows - 1 - r) / 7u;
+            dst[r * 2] = enhancedDirection > 0
+                ? (uint16_t)((uint32_t)bottom << shift)
+                : (uint16_t)(bottom >> shift);
+        }
+    }
 }
 
 void RescueOnFractalus::buildPostSprites()
 {
-    decodePostRLE((const uint8_t*)&mem[0x4DFA], leftPost->data()  + 2);   // P0 left
-    decodePostRLE((const uint8_t*)&mem[0x4E09], rightPost->data() + 2);   // P1 right
+    decodePostRLE((const uint8_t*)&mem[0x4DFA], leftPost->data()  + 2, +1); // P0: up-left
+    decodePostRLE((const uint8_t*)&mem[0x4E09], rightPost->data() + 2, -1); // P1: up-right
 }
 
 // Expand one Atari band-wedge player byte to a 32px field at DOUBLE width (band players
@@ -1243,8 +1248,8 @@ static inline uint32_t expandWedge32(uint8_t byte)
 void RescueOnFractalus::buildFlightFrameSprites()
 {
     // A-pillars into the post sprites (rows 0-85); band rows 86-93 left zero by allocate.
-    decodePostRLE((const uint8_t*)&mem[0x4DFA], flLeftPost->data()  + 2);
-    decodePostRLE((const uint8_t*)&mem[0x4E09], flRightPost->data() + 2);
+    decodePostRLE((const uint8_t*)&mem[0x4DFA], flLeftPost->data()  + 2, +1);
+    decodePostRLE((const uint8_t*)&mem[0x4E09], flRightPost->data() + 2, -1);
 
     uint16_t* lp = flLeftPost->data()  + 2;   // ch0: left wedge inner 16px, band rows 86..93
     uint16_t* lt = flLeftTri->data()   + 2;   // ch1: left wedge outer 16px, rows 0..7
