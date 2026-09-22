@@ -8,6 +8,15 @@ struct EnhancedSpriteAsset {
     uint8_t height;
 };
 
+// Full-size 14x15 logo sparkle. The original PMG rows occupy the same footprint after bit
+// doubling; this redraw keeps those extents while making the vertical and diagonal rays one pixel
+// thick. The centre row is supplied separately because the original animation narrows it in place.
+static const uint16_t kEnhancedLogoSparkle[15] = {
+    0x0100, 0x0100, 0x0100, 0x0100, 0x0100,
+    0x0940, 0x0580, 0xFFFC, 0x0580, 0x0940,
+    0x0100, 0x0100, 0x0100, 0x0100, 0x0100
+};
+
 static const uint16_t kEnhancedTorpedo0[] = {
     0x00C0, 0x01E0, 0x03F0, 0x0FFC, 0x3FFF
 };

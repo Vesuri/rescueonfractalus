@@ -6737,10 +6737,25 @@ void RescueOnFractalus::buildLogoSparkle()
     uint16_t* px = d + 2;
     for (unsigned r = 0; r < rows; r++) {
         const uint8_t bits = *src++;
-        // Faithful mode keeps the Atari colour-clock width (each source bit is two Amiga
-        // pixels).  Enhanced Graphics uses the source bits as true 1x1 pixels, centred in the
-        // same 16-pixel hardware-sprite word so the sparkle does not move as it becomes finer.
-        *px++ = g_enhancedGraphics ? (uint16_t)((uint16_t)bits << 4) : kDoubleGlyph[bits];
+        uint16_t mask;
+        if (!g_enhancedGraphics) {
+            mask = kDoubleGlyph[bits];
+        } else {
+            const unsigned shapeRow = first + r - 0x40u;
+            if (shapeRow >= 15u || bits == 0) {
+                mask = 0;
+            } else if (shapeRow != 7u || bits == 0x10u) {
+                // The five widened rows eventually collapse back to the one-pixel vertical ray.
+                mask = (bits == 0x10u) ? 0x0100u : kEnhancedLogoSparkle[shapeRow];
+            } else {
+                // The animated centre ray closes from both ends: retain each original doubled
+                // footprint, but as a single scanline rather than a two-pixel-thick construction.
+                mask = (bits == 0xFEu) ? 0xFFFCu :
+                       (bits == 0x7Cu) ? 0x3FF0u :
+                       (bits == 0x38u) ? 0x0FC0u : 0x0100u;
+            }
+        }
+        *px++ = mask;
         *px++ = 0;
     }
     for (unsigned r = rows; r < kLogoSparkleRows; r++) { *px++ = 0; *px++ = 0; }
