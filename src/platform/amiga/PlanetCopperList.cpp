@@ -58,19 +58,20 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 // mirrors the band DLI $6D67, which writes ONLY COLPF0/COLPF1 (the two greys) and leaves COLBK
 // and COLPF2 untouched.  So we emit exactly those two MOVEs (color01/color02) and nothing else
 // — color00 (COLBK) and color03 (COLPF2=$2A planet) stay the viewport's values, as on the Atari.
-#define BAND_BLOCK_WORDS      5   // band mode MOVE + two palette MOVEs + dashboard BPL4 switch
+#define BAND_BLOCK_WORDS      6   // band mode/palette, late modulo WAIT, dashboard BPL4 switch
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
 // Throttle-gauge re-point (channel 2).  The P0 starfield low sprite owns channel 2 across the
 // viewport; its VSTOP is at the cockpit line (180), so its post-VSTOP control-word fetch happens
 // at line 180's sprite DMA slot (~cycle 0x14).  These SPR2PT moves MUST be the FIRST moves after
 // the cockpit WAIT — at line 180 cycles 0-8, before that fetch — so the channel re-reads the
 // gauge sprite's control words instead of the P0-low terminator (which would idle it).  Mirrors
-// the flight-scene AH multiplex (FlightCopperList INDEX_AH_SPR).  COLOR21 (pair 2/3 pen 01) then
-// switches from the star pen to the gauge-bar colour.  SPR3 (P0 high) terminates on its own.
+// the flight-scene AH multiplex (FlightCopperList INDEX_AH_SPR).  The cockpit bitplane pointers
+// follow immediately because they share the hard display-fetch deadline; COLOR21 can wait until
+// after them.  SPR3 (P0 high) terminates on its own.
 #define INDEX_GAUGE_PTR       (INDEX_COCKPIT_WAIT + 1)     // SPR2PTH,SPR2PTL -> gauge (2)
-#define INDEX_GAUGE_COL       (INDEX_GAUGE_PTR + 2)        // COLOR21 = gauge bar (1)
-#define INDEX_COCKPIT_BPL     (INDEX_GAUGE_COL + 1)        // cockpit 3bp ptrs, yOffset 8 (6)
-#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P dual-PF (1)
+#define INDEX_COCKPIT_BPL     (INDEX_GAUGE_PTR + 2)        // cockpit 3bp ptrs, yOffset 8 (6)
+#define INDEX_GAUGE_COL       (INDEX_COCKPIT_BPL + 6)      // COLOR21 = gauge bar (1)
+#define INDEX_COCKPIT_BPLCON0 (INDEX_GAUGE_COL + 1)        // bplcon0 3P dual-PF (1)
 #define INDEX_COCKPIT_BPLCON2 (INDEX_COCKPIT_BPLCON0 + 1)  // PF2 stencil > sprites > PF1 (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON2 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // base colours + gauge pens (7)
@@ -183,6 +184,10 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
             d[idx++] = (cockpit.bitplanes == 4)
                 ? copperMove(bplcon0, (uint16_t)((4u << PLNCNTSHFT) | USE_BPLCON3))
                 : copperMove(0x1FE, 0);
+            // In enhanced mode the mode/palette group starts at $C0 so BPLCON0 is ready for
+            // line 172.  Do not let that early group also alter line 171's pointer advance:
+            // wait until the ordinary $E0 line-doubling slot before publishing the modulos.
+            d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
         }
         if (k == kViewportHeight - 1) {
             // Switch the zero fourth plane to dashboard row 8 one scanline early. Both sources
@@ -208,7 +213,11 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // ---- cockpit region: WAIT, then the channel-2 gauge re-point (MUST be first — see the
     // INDEX_GAUGE_PTR comment), then pointers (skip the 8 modeD band scanlines now drawn by the
     // band above via yOffset=8), 3bp, modulo, constant palette ----
-    d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
+    // The normal four-plane dashboard has enough DMA pressure that the old $E0 handoff can
+    // leave one of BPL1-3's pointer pairs arriving after its first fetch.  Start this group at
+    // $D8 in enhanced mode and put the colour write after the pointers; keep faithful timing.
+    d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1,
+                                       cockpit.bitplanes == 4 ? 0xD8 : 0xE0);
     showSprite(INDEX_GAUGE_PTR, 2, gauge);   // re-point channel 2 (P0-low -> throttle gauge)
     setEnergyIndicatorColor(0);              // COLOR21 = gauge bar (setter, at INDEX_GAUGE_COL)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8, 3); // BPL4 was preloaded at band entry
