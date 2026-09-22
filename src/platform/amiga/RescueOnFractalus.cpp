@@ -1203,13 +1203,13 @@ static void decodePostRLE(const uint8_t* tbl, uint16_t* dst, int enhancedDirecti
     for (; row < kHT; row++) { dst[row * 2] = 0x0000; dst[row * 2 + 1] = 0x0000; }
 
     if (g_enhancedGraphics && rows != 0) {
-        // Keep the authored bottom endpoint fixed, then walk upward one native Amiga pixel
-        // every seven rows.  The Atari RLE changes by two pixels every fourteen rows; deriving
-        // the enhanced shape from its bottom row also handles the two eight-row end runs without
-        // moving the lower endpoint or introducing an uneven first/last half-step.
+        // Keep the authored bottom endpoint fixed for five rows, then walk upward one native
+        // Amiga pixel every seven rows.  Across the 86-row pillar this leaves four rows at the
+        // topmost position.  The Atari RLE changes by two pixels every fourteen rows; deriving
+        // the enhanced shape from its bottom row preserves its lower endpoint exactly.
         const uint16_t bottom = dst[(rows - 1) * 2];
         for (int r = rows - 1; r >= 0; r--) {
-            const unsigned shift = (unsigned)(rows - 1 - r) / 7u;
+            const unsigned shift = ((unsigned)(rows - 1 - r) + 2u) / 7u;
             dst[r * 2] = enhancedDirection > 0
                 ? (uint16_t)((uint32_t)bottom << shift)
                 : (uint16_t)(bottom >> shift);
