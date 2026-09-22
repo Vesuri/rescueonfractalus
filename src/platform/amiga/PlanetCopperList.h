@@ -5,16 +5,15 @@ class Bitmap;
 class Sprite;
 
 // PlanetCopperList — the fixed-layout copper list for the stars/planet launch
-// viewport (scene 6, rsStars): title + a mode-D viewport band +
+// viewport (scene 6, rsStars): title + a line-doubled mode-D viewport band +
 // cockpit — the layout used on the rsViewport (non-flight) path.
 //
 // The viewport band is the reason this needs its own class rather than reusing
-// StandbyCopperList.  Faithful mode re-displays each mode-D row on two scanlines by
-// toggling BPL1MOD/BPL2MOD (-40 rewind / +80 advance); native terrain mode advances
-// through a pre-expanded 320x94 bitmap (+80 throughout).  The per-line sub-list is
-// CONSTANT every frame.  Built ONCE in
+// StandbyCopperList: the 43 mode-D rows are each re-displayed on two scanlines by
+// toggling BPL1MOD/BPL2MOD (-40 rewind / +80 advance) at every line's H-blank — an
+// 85-WAIT line-doubling sub-list that is CONSTANT every frame.  Built ONCE in
 // buildLayout() (geometry, bitmap pointers, sprite pointers incl. the three star
-// sprites, the per-line viewport program, the constant viewport + cockpit palettes), then
+// sprites, the line-doubling band, the constant viewport + cockpit palettes), then
 // the handful of per-frame-varying colours are poked in place via the setters — no
 // per-frame full rebuild, no double buffer.  Mirrors StandbyCopperList.
 //
@@ -34,7 +33,6 @@ public:
     // re-pointed (SPR2PT) in below the starfield, where the two never overlap vertically.
     void buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                      const Bitmap& bandPlane4,
-                     bool nativeViewport, // the same retained setting as the flight terrain renderer
                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
                      Sprite* const star[6]);
 

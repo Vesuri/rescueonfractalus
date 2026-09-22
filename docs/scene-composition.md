@@ -34,15 +34,12 @@ sprites. The artificial horizon, targeting-scope object, and scanner dot remain 
 Flight switches them in front of the normal playfield at the dashboard boundary, with the inactive
 scanner parked off-screen rather than hidden by the old PF2 stencil. Standby, Doors, Tunnel,
 Planet/stars, and Flight all use this contract. Their terrain,
-door, tunnel, planet, and starfield renderers remain three-plane. Independently, the retained
-Enhanced Terrain setting selects both the 320×94 flight terrain and an edge-aware 320×94 Planet
-decode; with it disabled, Planet keeps the original 160×47 image displayed as 2×2 pixels.
+door, tunnel, planet, and starfield renderers remain three-plane and otherwise unchanged.
 
 **The windscreen band changes SOURCE at the tunnel→planet handover, and that is where it breaks.**
 The shared `$3000` mode-D DL has an LMS at `$3156` whose operand is the tunnel's `$350D` cockpit
 band, patched to `$1810` for stars/planet — so `TunnelCopperList` draws the band from
-`cockpitBitmap` rows 0-7 and `PlanetCopperList` from `viewportBitmap` source rows 43-46
-(physical rows 86-93 when Enhanced Terrain is active), and
+`cockpitBitmap` rows 0-7 and `PlanetCopperList` from `viewportBitmap` rows 43-46, and
 `copy_192_to_1800` (`$75A5`) makes the two images the same 192 bytes so the handoff is meant to be
 pixel-identical. Its wide light-grey area is **pen 2 = COLOR02 = `$06`** (the band block at
 scanline 172 bakes COLOR01=`$04`/COLOR02=`$06`, mirroring band DLI `$6D67`); the sloped corner is

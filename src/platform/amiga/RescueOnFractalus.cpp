@@ -31,7 +31,6 @@
 #include "RescueOnFractalus.h"
 #include "FlightTerrainGeometry.h"
 #include "TerrainRenderConfig.h"
-#include "PlanetScale2x.h"
 #include "PaletteResolutionConfig.h"
 #include "EnhancedGraphicsConfig.h"
 #include "EnhancedSpriteAssets.h"
@@ -1146,9 +1145,7 @@ static const uint16_t kCockpitLine   = kTerrainLine + kTerrainHeight; // = 172
 static const uint16_t kCockpitH     = 4 * 2 + 10 * 8;               // = 88
 // Flight/planet ($316B mode-D DL) provide 47 source rows, not 43: the bottom 4 rows
 // ($2090-$21B0 / $1810-$18A0) are the wing-clearance band (windscreen-bottom frame +
-// the salmon clearance bars). Flight always renders all 94 physical rows. Planet either keeps
-// the original line-doubled 47-row bitmap or stores an edge-aware 320x94 expansion, selected by
-// the same startup setting as the flight terrain renderer.
+// the salmon clearance bars).  Flight renders all 94 physical rows; Planet still line-doubles.
 // The other scenes (standby/doors/tunnel) display only the first 86 — the extra rows
 // are allocated but unused there.
 static const uint16_t kViewportFullHeight = ROF_FLIGHT_PHYSICAL_ROWS;
@@ -3198,13 +3195,12 @@ void RescueOnFractalus::initialize()
         standbyCopper->buildLayout(*titleBitmap, *doorScrollBitmap, *cockpitBitmap,
                                    *leftPost, *rightPost, *nullSprite);
 
-    // Static stars/planet viewport fixed copper list (line-doubled or native-resolution mode-D),
+    // Static stars/planet viewport fixed copper list (the line-doubled mode-D band),
     // same build-once + poke-in-place scheme; renderFrame installs it during rsStars.
     planetCopper = new PlanetCopperList();
     if (planetCopper && planetCopper->data())
         planetCopper->buildLayout(*titleBitmap, *viewportBitmap, *cockpitBitmap,
                                     *(cockpitBandPlane4 ? cockpitBandPlane4 : cockpitBitmap),
-                                    g_flightEnhancedTerrain != 0,
                                     *leftPost, *rightPost,
                                     *(g_enhancedGraphics ? nullSprite : energyIndicatorSprite), starSprite);
 
@@ -3934,11 +3930,6 @@ void RescueOnFractalus::decodeBoostStars()
 // double-buffer halves; offset 0 is the displayed half) LMS'd from $1070 (= the
 // $1010 row-addr base + one off-screen scroll-margin row).  The +4 crop centres
 // the displayed 40 of 48 either way.
-static inline uint16_t planetBitmapRows(int sourceRows)
-{
-    return (uint16_t)(g_flightEnhancedTerrain ? (sourceRows << 1) : sourceRows);
-}
-
 void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int rows)
 {
 #ifdef ROF_FLIGHT_PROBE
@@ -3955,9 +3946,9 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 #endif
     if (!viewportBitmap) return;
 
-    // Faithful mode writes each mode-D row to ONE interleaved scanline and the Copper
-    // re-displays it twice. Native terrain mode instead reconstructs two physical rows
-    // here and the Copper advances every scanline. Layout per physical row: 40 plane1
+    // Write each mode-D row to ONE interleaved scanline; the copper line-doubles the
+    // region vertically (the Planet/Flight viewport band toggles the bitplane modulo
+    // -40/+80 per scanline, re-displaying each row twice).  Layout per row: 40 plane1
     // bytes, plane2 at +40, plane3 (always 0) at +80, then +120 to the next scanline.
     //
     // Decode 4 source bytes at a time into one 32-bit store per plane (the 68000 (An)+
@@ -3991,8 +3982,7 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
         // (base-change mid-stream, not the stars entry), kick it here.  Either way the shadow-zero
         // loop below runs while the blit is in flight, then we wait for it before the CPU writes.
         if (!viewportClearKicked)
-            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60,
-                                        planetBitmapRows(rows), 0);
+            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, (uint16_t)rows, 0);
         for (int i = 0; i < rows * 10; i++) viewportShadow[i] = 0u;   // FAST RAM, overlaps the blit
         AmigaHardware::blitterWait();
         viewportClearKicked = false;
@@ -4030,10 +4020,6 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 void RescueOnFractalus::decodeViewportRows(uint16_t srcBase, int stride, int rStart, int rEnd,
                                            bool countGroups)
 {
-    if (g_flightEnhancedTerrain && srcBase == 0x1000u) {
-        decodePlanetRowsNative(srcBase, stride, rStart, rEnd, countGroups);
-        return;
-    }
     static const int kCrop = 4;    // central 40 of 48 (centres content)
     (void)countGroups;
     const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + rof_mulu16((uint16_t)rStart, (uint16_t)stride);
@@ -4073,95 +4059,6 @@ void RescueOnFractalus::decodeViewportRows(uint16_t srcBase, int stride, int rSt
       if (_d > g_vpDecMax) { g_vpDecMax = _d; g_vpDecMaxVbi = rof_subclock()/313u;
                              g_vpDecMaxRows = (unsigned long)(rEnd - rStart + 1); } }
 #endif
-}
-
-static inline uint8_t planetModeDPixel(const uint8_t* row, int x)
-{
-    return (uint8_t)((row[x >> 2] >> (6 - ((x & 3) << 1))) & 3u);
-}
-
-void RescueOnFractalus::decodePlanetRowsNative(uint16_t srcBase, int stride,
-                                                int rStart, int rEnd, bool countGroups)
-{
-    static const int kCropBytes = 4;       // central 160 of the wide 192-pixel field
-    static const int kPlanetRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS;
-
-    // A source-row change can alter Scale2x output in either neighbouring terrain row.
-    // The band is deliberately excluded from that neighbourhood: it remains an exact 2x2
-    // expansion, and its distinct Copper palette begins at physical row 86.
-    if (rStart < kPlanetRows && rStart > 0) --rStart;
-    if (rEnd < kPlanetRows - 1) ++rEnd;
-    if (rStart < 0) rStart = 0;
-    if (rEnd >= ROF_FLIGHT_SOURCE_ROWS) rEnd = ROF_FLIGHT_SOURCE_ROWS - 1;
-
-    for (int row = rStart; row <= rEnd; ++row) {
-        const uint8_t* centre = (const uint8_t*)&mem[srcBase +
-            rof_mulu16((uint16_t)row, (uint16_t)stride) + kCropBytes];
-        const uint8_t* above = centre;
-        const uint8_t* below = centre;
-        const bool terrain = row < kPlanetRows;
-        if (terrain) {
-            if (row > 0) above -= stride;
-            if (row + 1 < kPlanetRows) below += stride;
-        }
-
-        // Four packed 320-pixel output rows: top/bottom x plane1/plane2.  Each source
-        // pixel contributes a 2x2 indexed block; Scale2x only substitutes corner pixels
-        // where the four-neighbour pattern proves a diagonal edge.
-        uint32_t out[4][10] = {};
-        uint8_t* topP1 = (uint8_t*)out[0];
-        uint8_t* topP2 = (uint8_t*)out[1];
-        uint8_t* botP1 = (uint8_t*)out[2];
-        uint8_t* botP2 = (uint8_t*)out[3];
-        for (int x = 0; x < ROF_FLIGHT_SOURCE_WIDTH; ++x) {
-            const uint8_t e = planetModeDPixel(centre, x);
-            uint8_t e0 = e, e1 = e, e2 = e, e3 = e;
-            if (terrain) {
-                const uint8_t b = planetModeDPixel(above, x);
-                const uint8_t d = planetModeDPixel(centre, x ? x - 1 : x);
-                const uint8_t f = planetModeDPixel(centre,
-                    x + 1 < ROF_FLIGHT_SOURCE_WIDTH ? x + 1 : x);
-                const uint8_t h = planetModeDPixel(below, x);
-                rofPlanetScale2xPixel(b, d, e, f, h, &e0, &e1, &e2, &e3);
-            }
-            const int px = x << 1;
-            const uint8_t m0 = (uint8_t)(0x80u >> (px & 7));
-            const uint8_t m1 = (uint8_t)(m0 >> 1);
-            const int byte = px >> 3;
-            if (e0 & 1u) topP1[byte] |= m0;
-            if (e0 & 2u) topP2[byte] |= m0;
-            if (e1 & 1u) topP1[byte] |= m1;
-            if (e1 & 2u) topP2[byte] |= m1;
-            if (e2 & 1u) botP1[byte] |= m0;
-            if (e2 & 2u) botP2[byte] |= m0;
-            if (e3 & 1u) botP1[byte] |= m1;
-            if (e3 & 2u) botP2[byte] |= m1;
-        }
-
-        uint8_t* dst = (uint8_t*)viewportBitmap->data +
-                       rof_mulu16((uint16_t)(row << 1), ROF_FLIGHT_ROW_STRIDE);
-        uint32_t* top1 = (uint32_t*)dst;
-        uint32_t* top2 = (uint32_t*)(dst + 40);
-        uint32_t* bot1 = (uint32_t*)(dst + 120);
-        uint32_t* bot2 = (uint32_t*)(dst + 160);
-        for (int i = 0; i < 10; ++i) {
-            top1[i] = out[0][i]; top2[i] = out[1][i];
-            bot1[i] = out[2][i]; bot2[i] = out[3][i];
-        }
-
-        // Keep the source shadow coherent for entry seeding/probes and for the unchanged
-        // faithful decoder contract, even though native rows are intentionally repainted as
-        // whole rows so neighbour-dependent edge pixels cannot be skipped.
-        uint32_t* shadow = viewportShadow + row * 10;
-        const uint32_t* sourceWords = (const uint32_t*)centre;
-        for (int i = 0; i < 10; ++i) shadow[i] = sourceWords[i];
-#ifdef ROF_FLIGHT_PROBE
-        extern volatile unsigned long g_starGroups;
-        if (countGroups) g_starGroups += 10;
-#else
-        (void)countGroups;
-#endif
-    }
 }
 
 #ifdef ROF_FLIGHT_PROBE
@@ -5450,8 +5347,7 @@ void RescueOnFractalus::renderFrame()
         // would wipe content nothing repaints.
         const bool vpEntryClear = (viewportForceFull || viewportLastBase != 0x1000u);
         if (vpEntryClear && !viewportClearKicked) {
-            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60,
-                                        planetBitmapRows(47), 0);
+            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
             viewportClearKicked = true;
         }
         for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i]);
@@ -5462,8 +5358,7 @@ void RescueOnFractalus::renderFrame()
         // DIFFERENT bitmaps — faithfully so: the shared mode-D DL $3120 has an LMS at $3156 whose
         // operand ($3157/$3158 = dl_param_lo/hi) is the tunnel's $350D cockpit band, patched to
         // $1810 for stars/planet.  So TunnelCopperList draws it from cockpitBitmap rows 0-7 and
-        // PlanetCopperList from viewportBitmap source rows 43-46 (physical rows 86-93 in native
-        // mode). Everything else in the viewport is
+        // PlanetCopperList from viewportBitmap rows 43-46.  Everything else in the viewport is
         // legitimately black here (the same 6502 burst zero_run's $1000..$1815), but the band is
         // not: copy_192_to_1800 ($75A5) has just copied $350D->$1810 verbatim, so the tunnel's
         // last band image and the stars' first are the SAME 192 bytes and the handoff is meant to
@@ -5488,7 +5383,7 @@ void RescueOnFractalus::renderFrame()
             decodeViewportRows(0x1000, 48, 43, 46, false);
         }
 #ifdef ROF_FLIGHT_PROBE
-        // Does the band seed actually put pixels in the displayed band rows before the list goes live?
+        // Does the band seed actually put pixels in rows 43-46 before the list goes live?
         { extern volatile unsigned char g_pbN;
           extern volatile unsigned short g_pbVbi[4];
           extern volatile unsigned long  g_pbSrc[4], g_pbBmp[4], g_pbShd[4];
@@ -5499,12 +5394,8 @@ void RescueOnFractalus::renderFrame()
               for (int r = 43; r <= 46; r++) {
                   const uint8_t* sp = (const uint8_t*)&mem[0x1000u + r * 48 + 4];
                   for (int b = 0; b < 40; b++) src |= sp[b];
-                  const int pr0 = g_flightEnhancedTerrain ? (r << 1) : r;
-                  const int pr1 = g_flightEnhancedTerrain ? pr0 + 1 : pr0;
-                  for (int pr = pr0; pr <= pr1; pr++) {
-                      const uint8_t* bp = (const uint8_t*)viewportBitmap->data + pr * 120;
-                      for (int b = 0; b < 120; b++) bmp |= bp[b];
-                  }
+                  const uint8_t* bp = (const uint8_t*)viewportBitmap->data + r * 120;
+                  for (int b = 0; b < 120; b++) bmp |= bp[b];
                   for (int w = 0; w < 10; w++) shd |= viewportShadow[r * 10 + w];
               }
               g_pbVbi[i] = platform_frame_count();
@@ -5864,7 +5755,7 @@ void RescueOnFractalus::renderFrame()
     }
 
     // Static stars/planet viewport: the rsViewport (non-flight) copper layout is FIXED
-    // (one fixed-layout mode-D band — line-doubled or native, see PlanetCopperList). render() has already
+    // (one line-doubled mode-D band — see PlanetCopperList).  render() has already
     // refreshed the bitmap content and buildStarSprites the sprite data, both at constant
     // pointers, so only a few colours change — poke them in place, no full rebuild/flip.
     const bool staticPlanet = planetCopper && rsStars;
@@ -7445,8 +7336,7 @@ void RescueOnFractalus::perFrameWork()
     // as its STARFIELD buffer (the copper reads it for the rows outside the reveal band), and this
     // clear would blank the starfield mid-cinematic.
     if (rsStars && !rsBoostViewport && viewportForceFull && viewportBitmap && !viewportClearKicked) {
-        AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60,
-                                    planetBitmapRows(47), 0);
+        AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
         viewportClearKicked = true;
     }
     // Starfield zero-copy scroll — the main loop only does the ONE-TIME full build here; the whole
@@ -8360,15 +8250,13 @@ void RescueOnFractalus::shutdown()
 
 
 #ifdef ROF_FLIGHT_PROBE
-// OR of the displayed viewport band rows, columns 16-23, over all three planes: non-zero iff the
+// OR of viewportBitmap rows 43-46, columns 16-23, over all three planes: non-zero iff the
 // windscreen band's wide light-grey area actually holds pixels.  (A whole-row OR is useless —
 // the corner wedge alone sets bits in every plane.)
 unsigned char RescueOnFractalus::bandMiddleOr() const
 {
     unsigned v = 0;
-    const int r0 = g_flightEnhancedTerrain ? 86 : 43;
-    const int r1 = g_flightEnhancedTerrain ? 93 : 46;
-    if (viewportBitmap) for (int r = r0; r <= r1; r++) {
+    if (viewportBitmap) for (int r = 43; r <= 46; r++) {
         const uint8_t* b = (const uint8_t*)viewportBitmap->data + r * 120;
         for (int k = 16; k < 24; k++) v |= b[k] | b[40 + k] | b[80 + k];
     }
