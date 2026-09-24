@@ -18,8 +18,6 @@ from extract_rom_data import checked_rom, extract
 EXPECTED = {
     "rof_game_data": ".bss",
     "rof_game_data_end": ".bss",
-    "rof_cockpit_planar": ".bss",
-    "rof_cockpit_planar_end": ".bss",
     "rof_data_descriptor": ".data",
 }
 RETIRED = (
@@ -80,6 +78,15 @@ def main() -> int:
         if got != wanted:
             raise SystemExit(f"{args.elf}: {name} is in {got}, expected {wanted}")
 
+    # incbin.s only reserves the cockpit atlas for ROF_ENHANCED_GRAPHICS.
+    # Both symbols may be absent; a present atlas must still be entirely BSS.
+    cockpit = ("rof_cockpit_planar", "rof_cockpit_planar_end")
+    if any(name in symbols for name in cockpit):
+        for name in cockpit:
+            got = symbols.get(name, ("missing", 0))[0]
+            if got != ".bss":
+                raise SystemExit(f"{args.elf}: {name} is in {got}, expected .bss")
+
     magic0, magic1, version, _reserved, ready, _pointer, size = struct.unpack(">IIHHIII", descriptor)
     if (magic0, magic1, version, ready, size) != (0x526F4621, 0x44415441, 1, 0, 0xA6E6):
         raise SystemExit(f"{args.elf}: external-data descriptor is not the release form")
@@ -97,7 +104,7 @@ def main() -> int:
             raise SystemExit(f"{args.hunk}: cartridge-data signature found")
         print(f"ROM-assisted signatures: PASS ({hashlib.sha256(package).hexdigest()})")
 
-    print("release data audit: PASS (package and cockpit storage are BSS; descriptor is unready)")
+    print("release data audit: PASS (package is BSS; cockpit storage is absent or BSS; descriptor is unready)")
     return 0
 
 

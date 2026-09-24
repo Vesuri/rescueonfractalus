@@ -1,62 +1,31 @@
-# WHDLoad slave for the Amiga port of Rescue on Fractalus!
-#
-# ⚠ This makefile runs ON THE AMIGA (or in an emulated Amiga), not on the host: it is
-# driven by SAS/C smake, and the slave is assembled with basm, which INCLUDEs WHDLoad's
-# own kick13.s (written for BASM / ASM-One / Asm-Pro / PhxAss).  The host cross-build in
-# ../amiga builds the game; this builds only the slave.  See ../docs/whdload-slave.md.
-#
-# ⚠ smake has no ifeq/ifneq conditionals, so Enhanced Graphics is a SEPARATE TARGET
-# rather than a command-line flag.  Run `smake clean` when switching between the release
-# and enhanced slaves (both write RoF.slave; smake will not rebuild it just because the
-# assembler flags changed).
-#
-# Assigns it expects:
-#   Includes:  the Amiga asm includes + WHDLoad's Include drawer (whdload.i,
-#              whdmacros.i) and lvo/dos.i
-#   Sources:   WHDLoad's Src/sources drawer (so whdload/kick13.s resolves)
-#
-#   smake                 -> RoF.slave        the release slave (no Enhanced Graphics)
-#   smake enhanced        -> RoF.slave        WITH the enhanced logo/games artwork and
-#                                             the Custom4 Enhanced Graphics toggle
-#   smake RoFTune.slave   -> RoFTune.slave    release slave plus DEBUG and MEMFREE, for
-#                                             re-tuning CHIPMEMSIZE/FASTMEMSIZE
-#   smake clean
+# Host cross-build; the original BASM rules are in Makefile.amiga.
+WHDLOAD ?= $(HOME)/.local/share/amiga/WHDLoad
+NDK ?= $(HOME)/.local/opt/m68k-amiga-elf/sys-include
+VASM ?= $(HOME)/.local/vasmm68k_mot
+VASMFLAGS ?=
+LHA ?= $(HOME)/.local/opt/lha/bin/lha
+export LHA
 
-BASENAME     = RoF
-SLAVE        = $(BASENAME).slave
-TUNE_SLAVE   = $(BASENAME)Tune.slave
-SLAVE_SOURCE = $(BASENAME)Slave.s
+.PHONY: all enhanced tune release dist clean FORCE
+all: RoF.slave
 
-#   O+      enable optimizer
-#   OG+     enable global forward-reference optimizing
-#   ODd-    disable mulu optimizing
-#   ODe-    disable muls optimizing
-#   w4-     disable 64k-access warnings
-#   wo-     disable optimizing warnings
-#   ws-     disable supervisor warnings
-COMMON_OPTS = -ws-
-SLAVE_OPTS  = -O+ -OG+ -ODd- -ODe- -w4- -wo- $(COMMON_OPTS)
+# Always assemble: options and SDK includes must not leave a stale variant.
+# Use the checked-in kick13/kickfs/segtracker sources (already use _lib.i names).
+RoF.slave: RoFSlave.s rof_data_layout.i FORCE
+	$(VASM) -m68000 -pic -x -devpac -Fhunkexe -nosym $(VASMFLAGS) -I"$(WHDLOAD)/Include" -I"$(NDK)" -o $@ $<
 
-# Enhanced Graphics artwork, bundled only by the `enhanced` target below.  The release
-# slave neither defines ROF_ENHANCED_GRAPHICS nor lists these as a prerequisite, so a
-# plain `smake` assembles none of it.
-LOGO_ASSETS = assets/enhanced_logo.bin assets/enhanced_games.bin assets/enhanced_logo.pal
+enhanced:
+	$(MAKE) RoF.slave VASMFLAGS="$(VASMFLAGS) -DROF_ENHANCED_GRAPHICS=1"
 
-all : $(SLAVE)
+tune: RoFTune.slave
+RoFTune.slave: RoFSlave.s rof_data_layout.i FORCE
+	$(VASM) -m68000 -pic -x -devpac -Fhunkexe -nosym $(VASMFLAGS) -DTUNE=1 -I"$(WHDLOAD)/Include" -I"$(NDK)" -o $@ $<
 
-# Release slave: no Enhanced Graphics.
-$(SLAVE) : $(SLAVE_SOURCE) rof_data_layout.i
-	basm $(SLAVE_OPTS) -o$(SLAVE) $(SLAVE_SOURCE)
+release: dist
 
-# Enhanced Graphics slave: define ROF_ENHANCED_GRAPHICS so the slave bundles the enhanced
-# artwork and offers the Custom4 Enhanced Graphics toggle.  Phony, so it always rebuilds
-# RoF.slave with the enhanced flag regardless of timestamps.
-enhanced : $(SLAVE_SOURCE) rof_data_layout.i $(LOGO_ASSETS)
-	basm $(SLAVE_OPTS) -dROF_ENHANCED_GRAPHICS=1 -o$(SLAVE) $(SLAVE_SOURCE)
+dist:
+	bash -c '. ../amiga/env.sh && $(MAKE) -C ../amiga clean && $(MAKE) -C ../amiga'
+	./create_release.sh
 
-# Re-tuning slave (DEBUG + MEMFREE), release configuration.
-$(TUNE_SLAVE) : $(SLAVE_SOURCE) rof_data_layout.i
-	basm $(SLAVE_OPTS) -dTUNE=1 -o$(TUNE_SLAVE) $(SLAVE_SOURCE)
-
-clean :
-	delete $(SLAVE) $(TUNE_SLAVE)
+clean:
+	rm -f RoF.slave RoFTune.slave

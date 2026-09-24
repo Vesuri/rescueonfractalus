@@ -1,5 +1,5 @@
 # Build artifacts.
-# The slave is assembled on the Amiga (basm), the archive is assembled by
+# The slave is cross-assembled on the host (vasm), the archive is assembled by
 # create_release.sh -- both are regenerable, neither belongs in the repo.
 *.slave
 dist/

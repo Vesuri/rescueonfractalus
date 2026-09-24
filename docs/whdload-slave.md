@@ -7,11 +7,12 @@ Files:
 
 | Path | What |
 |---|---|
-| `whdload/RoFSlave.s` | the slave source — assembled **on the Amiga** with `basm` |
-| `whdload/makefile` | Amiga-side build (`basm`) |
+| `whdload/RoFSlave.s` | the slave source — cross-assembled on the host with `vasm` |
+| `whdload/makefile` | host build (`vasm`), including `dist` (`release` alias), `enhanced` and `tune` targets |
+| `whdload/Makefile.amiga` | optional original Amiga-side build (`basm`, use `smake -f Makefile.amiga`) |
 | `whdload/RoF Install/` | the install package, derived from WHDLoad's Install Template |
 | `whdload/RoF Install/Manual` | the Lucasfilm manual as plain text — **generated**, `python3 tools/make_whdload_manual.py` from `docs/manual.md`; checked in, and `Manual.info` (a copy of the template's MultiView icon) gives it a Workbench icon |
-| `whdload/create_release.sh` | host-side: collects exe + slave + package into `whdload/dist/RoF.lha` |
+| `whdload/create_release.sh` | host-side: rebuilds the default slave and collects exe + slave + package into `whdload/dist/RescueOnFractalus.lha` |
 
 ## 0. Why this is a kickemu slave and not a 20-line loader
 
@@ -150,7 +151,7 @@ What has to fit:
 
 The two `?` rows are why the sizes are set generously rather than tightly. **They have not
 been tuned against a real run yet** — nothing below has been measured under the slave,
-because the slave is assembled on the Amiga.
+as part of the original memory-budget investigation.
 
 ### Re-tuning them
 
@@ -229,26 +230,84 @@ host, because a real 1.3 ROM is what the kickemu boots anyway:
 
 ## 3. Building it
 
-The slave is **not** part of the host cross-build. It `INCLUDE`s WHDLoad's `kick13.s`,
-which is written for BASM / ASM-One / Asm-Pro / PhxAss — vasm is not in its translator list
-— so it is assembled on the Amiga:
+The complete release can be built on the host:
 
-```
-; on the Amiga, with Includes: and Sources: assigned (see whdload/makefile)
-cd RoF:whdload
-make
+```sh
+make dist                          # from repository root
 ```
 
-Then, on the host:
+This clean-builds the external-data game (avoiding stale standalone/probe objects),
+assembles the release slave, audits the game for embedded cartridge data, and packages
+`whdload/dist/RescueOnFractalus.lha`. The native LHa compressor writes LH5 with level-1 headers, matching the
+published archive's ten member paths. `make -C whdload dist` and the earlier
+`make -C whdload release` are equivalent. No cartridge or Kickstart ROM is packaged.
 
-```
-cd amiga && . env.sh && make          # the game -> amiga/out/RoF
-cd ../whdload && ./create_release.sh  # -> whdload/dist/RoF.lha
+The compressor defaults to `~/.local/opt/lha/bin/lha`; override it with
+`make dist LHA=/path/to/lha`. Homebrew's `lha` from **lhasa** only extracts and
+cannot create this archive. The compressor used here is
+[LHa for UNIX](https://github.com/jca02266/lha), revision
+`16619b066b189ef289bb8b07b37d1c38d550da99`. One-time setup (C compiler,
+autoconf and automake required; choose a source path without spaces for its tests):
+
+```sh
+git clone https://github.com/jca02266/lha.git /tmp/rof-lha
+cd /tmp/rof-lha
+git checkout 16619b066b189ef289bb8b07b37d1c38d550da99
+autoreconf -is
+./configure --prefix="$HOME/.local/opt/lha"
+make && make check && make install
 ```
 
-The WHDLoad development package is expected at `~/.local/share/amiga/WHDLoad` — outside
-every repo, the same convention as `fsuae_common.sh`. That is where the Install Template,
-`kick13.s`, the autodocs and the `C/WHDLoad` executable were taken from.
+For individual steps:
+
+```sh
+make -C whdload                     # whdload/RoF.slave
+make -C whdload enhanced            # same filename, enhanced artwork + Custom4
+make -C whdload tune                # whdload/RoFTune.slave (DEBUG + MEMFREE)
+whdload/create_release.sh           # package existing game; rebuild default slave
+```
+
+Every slave invocation reassembles, so switching variants or changing SDK includes
+cannot reuse stale output. Packaging explicitly clears `VASMFLAGS` to select the
+release configuration. Override `VASM`, `WHDLOAD` and `NDK` for tool installations
+other than `~/.local/vasmm68k_mot`, `~/.local/share/amiga/WHDLoad` and
+`~/.local/opt/m68k-amiga-elf/sys-include`.
+
+Like Vette, this uses `-pic -x -devpac -Fhunkexe -nosym`. RoF builds with `-m68000`
+and uses its checked-in `whdload/kick13.s`, `kickfs.s` and `segtracker.s`; these
+already include the NDK's `_lib.i` filenames, so Vette's aliases are unnecessary.
+The Amiga `Include:` assign is guarded by `IFND __VASM`. Explicit word branches
+replace short branches that exceed their signed-byte range, and the enhanced logo's
+address-register null test uses `cmpa.w #0,a1` for 68000 compatibility.
+The original basm build remains available via `smake -f Makefile.amiga`.
+
+### Practical emulator test
+
+The isolated harness copies the game, slave and user-owned inputs into a fresh
+`build/whdload-test-*` directory. It terminates only its own emulator and retains
+WHDLoad's file log and core dumps. Supply local Kickstart 1.3 ROM/RTB files and a
+Workbench floppy containing Assign and libraries; source `amiga/env.sh` for FS-UAE
+and the outer Kickstart 3.1 path (`KICKSTART` can override it):
+
+```sh
+. amiga/env.sh
+python3 tools/test_whdload.py --rom /local/kick34005.A500 \
+  --rtb /local/kick34005.A500.RTB --workbench /local/Workbench.adf
+# Add --no-preload to exercise live reads.
+```
+
+The timed test uses a 68020 so WHDLoad can catch its timeout through a relocated
+VBR. It requires three cartridge-range reads, the ready marker in the loaded data
+descriptor, and execution inside RoF at timeout. `--mode quit --cpu 68000` instead
+requires a clean `make -C amiga FORCE_QUIT=1500` build and verifies normal return;
+clean-build the release afterwards. These tests need local ROMs but building and
+packaging do not.
+
+Verified on 2026-09-24 with vasm 1.9 and WHDLoad 19.2.6941: release,
+enhanced and tuning slaves assemble; production runs with and without PRELOAD
+reach RoF with validated cartridge data; a `FORCE_QUIT=1500` game returns OK on
+an emulated 68000. The default release archive passes the external-data audit
+(the optional enhanced cockpit atlas may be absent, or must be BSS if present).
 
 ## 4. What was changed in the Install Template, and why
 

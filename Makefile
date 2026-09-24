@@ -94,6 +94,8 @@ TARGET   := build/rof
 # If you change this, re-run the 10-step transition matrix (docs/transpiler.md §flag guard); a
 # half-working guard is worse than none, because it makes a vacuous green look verified.
 FLAGS_FILE := build/.flags
+# Packaging does not use SDL objects; leave their build flags alone.
+ifneq ($(MAKECMDGOALS),dist)
 FLAG_GUARD := $(shell mkdir -p build; \
     if [ "$$(cat $(FLAGS_FILE) 2>/dev/null)" != "$(BUILD_FLAGS)" ]; then \
         rm -f $(OBJS) tools/validate_native.o; \
@@ -102,6 +104,8 @@ FLAG_GUARD := $(shell mkdir -p build; \
     fi)
 ifeq ($(FLAG_GUARD),flags-changed)
   $(info FLAGS [$(BUILD_FLAGS)] changed — objects dropped, rebuilding)
+endif
+
 endif
 
 .PHONY: all clean gen validate hostproof cockpit-planar-assets cockpit-planar-check
@@ -229,3 +233,8 @@ clean:
 	rm -f $(OBJS) $(TARGET) tools/validate_native.o build/validate_native
 	rm -f $(FLAGS_FILE)
 	rm -rf $(HOSTPROOF_DIR)
+
+# Complete host-built WHDLoad distribution.
+.PHONY: dist
+dist:
+	$(MAKE) -C whdload dist

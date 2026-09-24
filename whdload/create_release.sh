@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Assemble the WHDLoad install archive in whdload/dist/.
 #
-# Runs on the HOST.  It collects three things that are built elsewhere:
+# Runs on the HOST.  It builds the slave and collects:
 #   * the game executable   ../amiga/out/RoF       (`cd ../amiga && . env.sh && make`)
-#   * the slave             ./RoF.slave            (`make` on the Amiga -- see makefile)
+#   * the slave             ./RoF.slave            (`make` on this host)
 #   * the install package   ./RoF Install/         (in the repo)
 #
-# Result: whdload/dist/RoF.lha, the archive to hand to a player, plus the unpacked
+# Result: whdload/dist/RescueOnFractalus.lha, the archive to hand to a player, plus the unpacked
 # tree beside it so you can inspect or test it without unpacking.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,11 +21,8 @@ SLAVE=RoF.slave
   echo "       Build the game first:  cd ../amiga && . env.sh && make"
   exit 1
 }
-[ -f "$SLAVE" ] || {
-  echo "error: $SLAVE not found."
-  echo "       The slave is assembled with basm ON THE AMIGA -- see whdload/makefile."
-  exit 1
-}
+# Rebuild the default slave even if the previous build was enhanced or diagnostic.
+make RoF.slave VASMFLAGS=
 
 # The public package must use the external-data build.  Check its ELF sections and descriptor
 # rather than guessing from printable strings (the Atari text is encoded).
@@ -45,12 +42,8 @@ cp -p "$PKG.info" "$DIST/"
 cp -p "$EXE"   "$DIST/$PKG/RoF"
 cp -p "$SLAVE" "$DIST/$PKG/$SLAVE"
 
-if command -v lha >/dev/null 2>&1; then
-  ( cd "$DIST" && lha a RoF.lha "$PKG" "$PKG.info" >/dev/null )
-  echo "built $DIST/RoF.lha"
-else
-  echo "note: 'lha' not installed -- the unpacked tree is in $DIST/, archive it on the Amiga"
-fi
+# Native LH5 compressor; LHA can override the installed compressor path.
+python3 ../tools/package_whdload.py "$DIST"
 
 echo "contents:"
 find "$DIST" -type f | sort | sed 's/^/  /'

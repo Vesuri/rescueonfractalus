@@ -6,7 +6,7 @@
 ;  :Requires.	WHDLoad 17+, whdload/kick13.s, an installed Kickstart 1.3 image
 ;  :Copyright.	Public Domain
 ;  :Language.	68000 Assembler
-;  :Translator.	BASM 2.16
+;  :Translator.	BASM 2.16 / vasm (Devpac mode)
 ;---------------------------------------------------------------------------*
 ;
 ; WHY THIS SLAVE IS A KICKEMU AND NOT A PLAIN LOADER
@@ -51,7 +51,9 @@
 ;
 ;---------------------------------------------------------------------------*
 
+	IFND __VASM
 	INCDIR	Include:
+	ENDC
 	INCLUDE	whdload.i
 	INCLUDE	whdmacros.i
 ;	INCLUDE	lvo/dos_lib.i
@@ -122,7 +124,7 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		dc.b	"Left mouse button quits.",10
 		dc.b	"F10 also quits, on a 68010 or better.",0
 ; Enhanced Graphics is opt-in at build time (basm -dROF_ENHANCED_GRAPHICS=1, via
-; `make ENHANCED_GRAPHICS=1`).  A default slave omits the enhanced logo/games
+; `make enhanced` on the host or `smake -f Makefile.amiga enhanced` on Amiga).  A default slave omits the enhanced logo/games
 ; artwork, its logo hook and the Custom4 patch, so it must not advertise Custom4.
 slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);"
 		dc.b	"C2:B:Enhanced Terrain Rendering;"
@@ -257,9 +259,9 @@ _load_game_data
 .scan		cmpa.l	a4,a3
 		bhi.s	.seg
 		cmp.l	#data_MAGIC0,(a3)
-		bne.s	.next
+		bne.w	.next
 		cmp.l	#data_MAGIC1,4(a3)
-		bne.s	.next
+		bne.w	.next
 		cmp.w	#data_VERSION,8(a3)
 		bne	.bad
 		cmp.l	#data_SIZE,20(a3)
@@ -324,7 +326,7 @@ _load_game_data
 		movem.l	(a7)+,d2-d6/a3-a5
 		rts
 .next		addq.l	#4,a3
-		bra.s	.scan
+		bra.w	.scan
 .bad		pea	TDREASON_WRONGVER
 		jmp	(resload_Abort,a2)
 
@@ -611,29 +613,29 @@ _hook_load	movem.l	d2/a2,-(a7)
 	IFD ROF_ENHANCED_GRAPHICS
 _hook_logo	lea	(_rof_custom4,pc),a0
 		tst.l	(a0)
-		beq.s	.decline
+		beq.w	.decline
 		move.l	(4,a7),a0		;context
 		cmp.w	#2,(a0)		;context version
-		bne.s	.decline
+		bne.w	.decline
 		cmp.w	#40,2(a0)		;minimum context size
-		blo.s	.decline
+		blo.w	.decline
 		cmp.w	#1,26(a0)		;4-plane interleaved format
-		bne.s	.decline
+		bne.w	.decline
 		cmp.w	#320,12(a0)
-		bne.s	.decline
+		bne.w	.decline
 		cmp.w	#340,14(a0)
-		bne.s	.decline
+		bne.w	.decline
 		cmp.w	#4,16(a0)
-		bne.s	.decline
+		bne.w	.decline
 		cmp.w	#40,18(a0)
-		bne.s	.decline
+		bne.w	.decline
 		cmp.w	#160,20(a0)
-		bne.s	.decline
+		bne.w	.decline
 
 		cmp.w	#1,36(a0)		;INITIAL?
 		beq.s	.initial
 		cmp.w	#2,36(a0)		;GAMES?
-		bne.s	.decline
+		bne.w	.decline
 
 		;30 rows x 4 planes x 11 bytes.  The source rectangle is image
 		;x=104..191, centred at bitmap x=120; row 65 begins at byte $28a0.
@@ -651,7 +653,7 @@ _hook_logo	lea	(_rof_custom4,pc),a0
 		rts
 
 .initial	cmp.l	#16000,8(a0)		;100 complete 160-byte rows
-		blo.s	.decline
+		blo.w	.decline
 		move.l	a0,d1			;keep context in caller-saved D1
 		move.l	(4,a0),a1
 		lea	(_enhanced_logo,pc),a0
@@ -660,10 +662,10 @@ _hook_logo	lea	(_rof_custom4,pc),a0
 		dbf	d0,.logo_copy
 		move.l	d1,a0
 		move.l	(28,a0),a1		;palette destination
-		tst.l	a1
-		beq.s	.decline
+		cmpa.w	#0,a1
+		beq.w	.decline
 		cmp.w	#16,32(a0)
-		blo.s	.decline
+		blo.w	.decline
 		lea	(_enhanced_palette,pc),a0
 		moveq	#15,d0
 .pal_copy	move.w	(a0)+,(a1)+
