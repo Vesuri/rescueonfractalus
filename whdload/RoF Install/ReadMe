@@ -39,7 +39,7 @@
  The correct ROM is 65536 bytes and has SHA-256 checksum:
  1eb18e2a1ff31f43871a5e4e21e73f61b7659177d33d2cdbb29f36530b9f4d68
 
- The Slave validates the ROM when the game starts and reads the required data
+ The game validates the ROM when it starts and reads the required data
  from it. If validation fails, check that the selected file is the 64 KB XEGS
  cartridge ROM rather than another version of the game.
 
@@ -69,6 +69,9 @@
 
  History:
  --------
+ version 1.2 (28.09.2026):
+ - the game can now run without WHDLoad, loading its ROM from data/rof.rom
+
  version 1.1 (20.09.2026):
  - optional native-resolution flight terrain (see Features)
  - optional enhanced palette for smoother fades and time-of-day changes (see
