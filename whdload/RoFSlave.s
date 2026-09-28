@@ -84,8 +84,16 @@
 ; them properly, build the TUNE slave (`make RoFTune.slave`), play through, and read
 ; the low-water marks -- see docs/whdload-slave.md.
 
-CHIPMEMSIZE	= $4c000	;384 KB
+	IFD ROF_ENHANCED_GRAPHICS
+; All three enhancements need larger bitmaps plus the generated cockpit atlas.
+; The default pools left only 52 KB chip free before the 54,400-byte logo bitmap:
+; allocation failed silently, so reaching the game alone was not a valid smoke test.
+CHIPMEMSIZE	= $60000	;384 KB
+FASTMEMSIZE	= $a0000	;640 KB, plus the separate 256 KB Kickstart image
+	ELSE
+CHIPMEMSIZE	= $4c000	;304 KB
 FASTMEMSIZE	= $90000	;576 KB
+	ENDC
 NUMDRIVES	= 1		;NOT 0: only 3.1 survives a driveless boot, 1.2/1.3 crash
 WPDRIVES	= %0000		;all emulated drives write protected
 
@@ -330,7 +338,7 @@ _patch_bplcon3
 		move.l	#bpl3_MAGIC1,d3
 		move.w	#bpl3_DEFAULT,d4
 		move.w	#bpl3_BLANKED,d5
-		bsr.s	_patch_config_word
+		bsr.w	_patch_config_word
 		movem.l	(a7)+,d2-d5
 .done		rts
 
@@ -340,17 +348,19 @@ terr_DEFAULT	= 0
 terr_ENHANCED	= 1
 
 _patch_terrain_renderer
+		movem.l	d2-d5,-(a7)
+		moveq	#0,d5
 		lea	(_rof_custom2,pc),a0
 		tst.l	(a0)
-		beq.s	.done			;default: original 2x2 renderer
-		movem.l	d2-d5,-(a7)
+		beq.s	.selected
+		moveq	#1,d5
+.selected	move.w	d5,d4
+		eori.w	#1,d4			;patch the opposite state, including build defaults
 		move.l	#terr_MAGIC0,d2
 		move.l	#terr_MAGIC1,d3
-		move.w	#terr_DEFAULT,d4
-		move.w	#terr_ENHANCED,d5
-		bsr.s	_patch_config_word
+		bsr.w	_patch_config_word
 		movem.l	(a7)+,d2-d5
-.done		rts
+		rts
 
 epal_MAGIC0	= $526f4621		;'RoF!'
 epal_MAGIC1	= $4550414c		;'EPAL'
@@ -358,17 +368,19 @@ epal_DEFAULT	= 0
 epal_ENHANCED	= 1
 
 _patch_enhanced_palette
+		movem.l	d2-d5,-(a7)
+		moveq	#0,d5
 		lea	(_rof_custom3,pc),a0
 		tst.l	(a0)
-		beq.s	.done			;default: faithful Atari colour resolution
-		movem.l	d2-d5,-(a7)
+		beq.s	.selected
+		moveq	#1,d5
+.selected	move.w	d5,d4
+		eori.w	#1,d4			;patch the opposite state, including build defaults
 		move.l	#epal_MAGIC0,d2
 		move.l	#epal_MAGIC1,d3
-		move.w	#epal_DEFAULT,d4
-		move.w	#epal_ENHANCED,d5
-		bsr.s	_patch_config_word
+		bsr.w	_patch_config_word
 		movem.l	(a7)+,d2-d5
-.done		rts
+		rts
 
 	IFD ROF_ENHANCED_GRAPHICS
 egrf_MAGIC0	= $526f4621		;'RoF!'
@@ -377,17 +389,19 @@ egrf_DEFAULT	= 0
 egrf_ENHANCED	= 1
 
 _patch_enhanced_graphics
+		movem.l	d2-d5,-(a7)
+		moveq	#0,d5
 		lea	(_rof_custom4,pc),a0
 		tst.l	(a0)
-		beq.s	.done			;default: faithful cockpit graphics
-		movem.l	d2-d5,-(a7)
+		beq.s	.selected
+		moveq	#1,d5
+.selected	move.w	d5,d4
+		eori.w	#1,d4			;patch the opposite state, including build defaults
 		move.l	#egrf_MAGIC0,d2
 		move.l	#egrf_MAGIC1,d3
-		move.w	#egrf_DEFAULT,d4
-		move.w	#egrf_ENHANCED,d5
-		bsr.s	_patch_config_word
+		bsr.w	_patch_config_word
 		movem.l	(a7)+,d2-d5
-.done		rts
+		rts
 	ENDC
 
 ; D2/D3 = block magic, D4 = expected word, D5 = replacement word.

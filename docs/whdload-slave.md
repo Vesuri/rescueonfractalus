@@ -115,6 +115,14 @@ resolution. `C3:B:Enhanced Palette;` patches it to one before entry; the rendere
 the setting and applies it only to the identified fade and atmosphere paths documented in
 `docs/palette-resolution-plan.md`.
 
+Custom2/3/4 explicitly select either zero or one, overriding standalone build defaults.
+This matters for an executable built with `ENHANCED_GRAPHICS=1`: disabling Custom4 must
+restore both the original cockpit and the original logo. The enhanced slave reserves
+384 KB chip and 640 KB expansion RAM (plus the 256 KB Kickstart image). The standard
+slave retains 304 KB chip and 576 KB expansion RAM. With all enhancements enabled, the
+old pools could leave only 52 KB chip free and silently fail to allocate the 54,400-byte
+boot bitmap, so merely reaching the game does not prove the enhanced logo works.
+
 ### The left-mouse quit stays as it is (user decision, 2026-08-14)
 
 `rof_check_restart()` (`PlatformAmiga.cpp:1694`) quits on a bare
@@ -469,3 +477,27 @@ out of this build.
 * `README.md` — the player-facing requirements for the plain (non-WHDLoad) executable
 * `~/.local/share/amiga/WHDLoad/Src/sources/whdload/kick.readme` — every `kick13.s` symbol
 * `~/.local/share/amiga/WHDLoad/Docs/en/` — the WHDLoad manual (`howto`, `opt`, `cache`)
+
+### Enhancement regression checks (2026-09-28)
+
+The external-ROM enhanced build was checked under direct startup and the enhanced
+WHDLoad slave. Direct runtime captures covered native-resolution terrain (86 rows),
+odd-luminance palette output, the complete generated cockpit atlas, and both logo phases.
+The logo bitmap, palette, GAMES overlay, and cockpit atlas matched expected bytes.
+WHDLoad checks covered enabled and disabled runtime settings, an unbuilt cockpit atlas
+when disabled, and rendered logo data with PRELOAD and live cartridge reads.
+
+Build `amiga` with `ENHANCED_GRAPHICS=1 ENHANCED_TERRAIN=1 ENHANCED_PALETTE=1`
+(after `make clean`) and `make -C whdload enhanced`. Extend the harness command above with:
+
+```
+--custom2 1 --custom3 1 --custom4 1 --elf amiga/out/RoF.elf
+```
+
+`--elf` verifies the actual runtime flags and the generated cockpit atlas, in addition
+to the retained configuration words. With this production build on the harness's default
+68020, `--ticks 250 --logo-phase initial` captures the enhanced logo, and
+`--ticks 400 --logo-phase games --no-preload` captures its GAMES overlay. These checks
+require the entire 16,000-byte expected bitmap in chip memory, catching missing allocations.
+Logo capture timing can need adjustment for other CPUs or diagnostic builds.
+Use zero for all three custom options to check the original rendering paths.
