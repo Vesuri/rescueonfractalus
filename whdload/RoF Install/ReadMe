@@ -71,6 +71,7 @@
  --------
  version 1.2 (28.09.2026):
  - the game can now run without WHDLoad, loading its ROM from data/rof.rom
+ - higher-resolution planet rendering when Enhanced Terrain is enabled
 
  version 1.1 (20.09.2026):
  - optional native-resolution flight terrain (see Features)
