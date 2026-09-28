@@ -7,7 +7,7 @@ item 1). Read this before touching `src/xex_load.h`, `src/platform/amiga/XexImag
 **Status: SUPERSEDED FOR SHIPPING (2026-09-16).** This document remains the historical proof
 behind the sparse image. The current executable no longer embeds either form: see
 `docs/copyright-data-extraction-plan.md`. `rof_game_data` is BSS in the release build and the
-WHDLoad slave fills it from the user's complete XEGS `rof.rom`. The files and `FULLXEX` switch
+executable fills it at startup from the user's complete XEGS `rof.rom`. The files and `FULLXEX` switch
 described below have been retired.
 
 Previously, `assets/rof_boot_image.bin` (27,872 B) replaced the embedded `rof.xex`

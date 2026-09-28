@@ -1,4 +1,4 @@
-# Standalone-data startup smoke test. Run after `make standalone ROM=../rof.rom`:
+# Cartridge startup smoke test. Run after `make` with local ../rof.rom:
 #   GDBSCRIPT=data_smoke.gdb ./diag_run.sh 14
 # Reaching scene.initialize proves the descriptor/CRC gate passed and all four boot stages
 # were reconstructed into mem[] before any renderer consumed them.

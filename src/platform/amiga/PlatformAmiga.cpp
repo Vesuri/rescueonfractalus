@@ -23,7 +23,7 @@
 #include <proto/exec.h>
 #include <proto/graphics.h>
 #include <proto/cia.h>
-#include <proto/dos.h>   // the ONLY OS file I/O in the port: the high-score file (hiscoreLoad/Save)
+#include <proto/dos.h>   // startup cartridge loading and high-score file I/O
 #include <dos/dosextens.h>       // struct Process, for pr_WindowPtr (requester suppression)
 #include <exec/interrupts.h>
 #include <exec/execbase.h>
@@ -3784,6 +3784,62 @@ bool PlatformAmiga::hiscoreSave(const uint8_t* blk)
 // ============================================================================
 //  PlatformAmiga construction + run — takeover, install interrupts, run scene, restore
 // ============================================================================
+// Load while DOS still owns the machine. No temporary ROM copy is needed: only
+// the three audited ranges are read directly into the executable's BSS package.
+static bool loadCartridgeData()
+{
+    if (rof_data_descriptor.ready == ROF_DATA_READY)
+        return rof_data_available() != 0; // explicit embedded build / older slave
+    if (!DOSBase) return false;
+    struct Process* process = (struct Process*)FindTask(0);
+    APTR oldWindow = process->pr_WindowPtr;
+    process->pr_WindowPtr = (APTR)-1;
+    BPTR file = 0;
+    // PROGDIR was introduced in V36. Kickstart 1.3 / kickemu uses the current
+    // directory; main establishes it from the icon's WBArg for Workbench launches.
+    if (((struct Library*)DOSBase)->lib_Version >= 36) {
+        file = Open((UBYTE*)"PROGDIR:data/rof.rom", MODE_OLDFILE);
+        if (!file) file = Open((UBYTE*)"PROGDIR:rof.rom", MODE_OLDFILE);
+    }
+    if (!file) file = Open((UBYTE*)"data/rof.rom", MODE_OLDFILE);
+    if (!file) file = Open((UBYTE*)"rof.rom", MODE_OLDFILE);
+    bool ok = false;
+    if (file) {
+        static const unsigned long offsets[] = {
+            ROF_DATA_ROM0_OFFSET, ROF_DATA_ROM1_OFFSET, ROF_DATA_ROM2_OFFSET };
+        static const unsigned long sizes[] = {
+            ROF_DATA_ROM0_SIZE, ROF_DATA_ROM1_SIZE, ROF_DATA_ROM2_SIZE };
+        ok = Seek(file, 0, OFFSET_END) >= 0 &&
+             Seek(file, 0, OFFSET_CURRENT) == 65536;
+        unsigned char* dest = rof_game_data;
+        for (unsigned int i = 0; ok && i < 3; ++i) {
+            ok = Seek(file, offsets[i], OFFSET_BEGINNING) >= 0;
+            unsigned long remaining = sizes[i];
+            while (ok && remaining) {
+                LONG got = Read(file, dest, remaining);
+                if (got <= 0) { ok = false; break; }
+                dest += got;
+                remaining -= got;
+            }
+        }
+        Close(file);
+        if (ok) {
+            rof_data_descriptor.ready = ROF_DATA_READY;
+            ok = rof_data_available() != 0;
+        }
+    }
+    process->pr_WindowPtr = oldWindow;
+    if (!ok) {
+        rof_data_descriptor.ready = 0;
+        static const char message[] =
+            "RoF: cannot load cartridge data. Provide the supported 65536-byte\n"
+            "XEGS v5.0 ROM as data/rof.rom (or rof.rom beside RoF).\n";
+        BPTR output = Output();
+        if (output) Write(output, (APTR)message, sizeof(message) - 1);
+    }
+    return ok;
+}
+
 PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
 {
     // Bring up the platform (mirrors PlatformSDL's ctor doing SDL_Init): open
@@ -3792,15 +3848,11 @@ PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
     // The package is supplied through the retained data descriptor and loaded into mem[] by
     // load_xex_image(), so the path argument is ignored.
     GfxBase = (struct GfxBase*)OpenLibrary((UBYTE*)"graphics.library", 33);
-    const int dataReady = rof_data_available();
+    const bool dataReady = loadCartridgeData();
     quit = (GfxBase == 0) || !dataReady;
     if (!dataReady) KPrintF("RoF: cartridge data unavailable (check %ld)\n", (long)rof_data_error);
 
-    // dos.library, for the high-score file only — opened HERE so the read happens while the OS
-    // still owns the machine, and so the open itself (which can Wait()) is outside run()'s
-    // Forbid().  Its absence is not fatal: the game then runs on the factory table and saves
-    // nothing.  V33 (1.2) is enough for Open/Read/Write/Close.
-    DOSBase = (struct DosLibrary*)OpenLibrary((UBYTE*)"dos.library", 33);
+    // main opens DOS before construction and closes it after directory restoration.
     hiscoreFileRead();
 
     // Publish the global Platform* the C bridge (platform_cbridge.cpp) dispatches through.
@@ -3809,7 +3861,6 @@ PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
 
 PlatformAmiga::~PlatformAmiga()
 {
-    if (DOSBase)  { CloseLibrary((struct Library*)DOSBase);  DOSBase  = 0; }
     if (GfxBase)  { CloseLibrary((struct Library*)GfxBase);  GfxBase  = 0; }
 }
 

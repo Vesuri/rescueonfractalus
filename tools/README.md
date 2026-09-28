@@ -66,3 +66,9 @@ generator ever changes.
 
 `ghidra` is a symlink to the shared install, `ghidra-proj/` is the local annotation project, and
 `__pycache__/` is Python's — all three are gitignored.
+
+`test_rom_failures.py --workbench /local/Workbench.adf` checks that the default
+Amiga executable rejects missing, short, oversized, and corrupted cartridges with
+AmigaDOS FAIL and a diagnostic. Source `amiga/env.sh` first; it uses the local
+`rof.rom` and retains isolated fixtures under `build/`. For successful direct startup,
+use `GDBSCRIPT=data_smoke.gdb amiga/diag_run.sh 20` after building the default executable.

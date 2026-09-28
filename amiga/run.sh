@@ -39,6 +39,11 @@ mkdir -p "$DH0/s" "$DH1" "$RUN/state"
 # with "Unknown command cd".  The game itself is 1.3-clean (user-confirmed 2026-08-14).
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
 cp -f "$EXE" "$DH1/RoF"
+# Stage only a locally supplied cartridge; it is never part of a release.
+if [ -f "${ROF_ROM:-../rof.rom}" ]; then
+  mkdir -p "$DH1/data"
+  cp -f "${ROF_ROM:-../rof.rom}" "$DH1/data/rof.rom"
+fi
 echo "running $EXE"
 
 # ⚠ ALWAYS start from a clean FS-UAE state.  diag_run.sh / the gdb-stub harnesses share this

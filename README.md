@@ -20,24 +20,24 @@ This is a faithful 1:1 reimplementation, rebuilt from the original game rather t
 
 ## How to run
 
-The normal release executable is intended for WHDLoad and contains no original game data.
-For direct Workbench or Shell use, build a standalone executable from your own 64 KB XEGS
-cartridge image:
+The normal release executable contains no original game data and runs directly from
+Workbench or Shell, as well as through WHDLoad. Place your 65,536-byte XEGS v5.0
+cartridge image at `data/rof.rom` beside `RoF`, then start `RoF`.
+It also accepts `rof.rom` beside the executable (the WHDLoad installed layout).
+On Kickstart 1.3, Shell users should first change to the game's directory.
+The executable reads and validates the ROM before taking over the display; missing,
+wrong-sized or unsupported data causes startup to fail with AmigaDOS return code 20.
+
+To build it:
 
 ```sh
 cd amiga
 . ./env.sh
-make standalone ROM=/path/to/rof.rom
+make
 ```
 
-Then copy `out/RoF` to your Amiga and start it:
-
-```
-RoF
-```
-
-The generated data package is ignored by Git and is included only in this explicitly requested
-standalone build.
+An optional development build, `make standalone ROM=/path/to/rof.rom`, still embeds
+an ignored extracted package. That data-bearing build must not be distributed.
 
 ### The `rof.rom` cartridge image
 
@@ -70,8 +70,8 @@ On an emulator, point a hard drive at the folder containing `RoF` and run it fro
 ### WHDLoad
 
 The WHDLoad install ships the default BSS executable and asks you to select your complete
-65,536-byte XEGS `rof.rom`. The installer copies the ROM into the game directory; the slave
-loads only the required ranges before starting the executable. Neither the ROM nor an extracted
+65,536-byte XEGS `rof.rom`. The installer copies the ROM into the game directory; the executable
+loads only the required ranges at startup. Neither the ROM nor an extracted
 data package is included in this repository or release archive.
 
 The install needs more

@@ -149,7 +149,7 @@ slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);"
 ; So quit WHDLoad instead.
 
 _program	dc.b	"RoF",0
-_romfile	dc.b	"rof.rom",0
+_startup_error	dc.b	"RoF startup failed. Check the installed 65536-byte XEGS v5.0 rof.rom.",0
 _args		dc.b	10		;empty argument line -- must be LF terminated
 _args_end
 	EVEN
@@ -177,11 +177,6 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 		move.l	d0,d7			;D7 = segment list (BPTR)
 		beq	.program_err
 
-	;Fill the executable's original-data BSS from the user-supplied cartridge.
-	;Only three audited ranges are read; the complete ROM remains installed so its
-	;provenance is explicit and no derived game-data file is distributed.
-	bsr	_load_game_data
-
 	;give the game somewhere to save its high scores (see _patch_hooks)
 		bsr	_patch_hooks
 
@@ -208,8 +203,16 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 		lea	(_args,pc),a0
 		jsr	(4,a1)			;first hunk + 4 = the code
 
+		tst.l	d0
+		bne.s	.game_err
+
 	;quit
 		pea	TDREASON_OK
+		move.l	(_resload,pc),a2
+		jmp	(resload_Abort,a2)
+
+.game_err	pea	(_startup_error,pc)
+		pea	TDREASON_FAILMSG
 		move.l	(_resload,pc),a2
 		jmp	(resload_Abort,a2)
 
@@ -225,115 +228,6 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 		clr.l	-(a7)
 		pea	TDREASON_OSEMUFAIL
 		jmp	(resload_Abort,a2)
-
-;============================================================================
-; Locate the retained RoF!DATA descriptor in the LoadSeg hunks, load the three
-; cartridge ranges into its BSS package, then publish the ready marker.
-
-data_MAGIC0	= $526f4621		;'RoF!'
-data_MAGIC1	= $44415441		;'DATA'
-data_VERSION	= 1
-data_READY	= $52444621		;'RDF!'
-data_DESC_SIZE	= 24
-	INCLUDE	rof_data_layout.i
-
-_load_game_data
-		movem.l	d2-d6/a3-a5,-(a7)
-		lea	(_romfile,pc),a0
-		jsr	(resload_GetFileSize,a2)
-		cmp.l	#$10000,d0
-		bne	.bad
-
-		move.l	d7,d0			;current hunk BPTR
-.seg		tst.l	d0
-		beq	.bad
-		add.l	d0,d0
-		add.l	d0,d0
-		move.l	d0,a3			;hunk header
-		move.l	(-4,a3),d1		;allocated size incl header
-		move.l	(a3)+,d0		;next BPTR; A3 = first data byte
-		sub.l	#8+data_DESC_SIZE,d1
-		bmi.s	.seg
-		move.l	a3,a4
-		add.l	d1,a4
-.scan		cmpa.l	a4,a3
-		bhi.s	.seg
-		cmp.l	#data_MAGIC0,(a3)
-		bne.w	.next
-		cmp.l	#data_MAGIC1,4(a3)
-		bne.w	.next
-		cmp.w	#data_VERSION,8(a3)
-		bne	.bad
-		cmp.l	#data_SIZE,20(a3)
-		bne	.bad
-		move.l	16(a3),a5		;package BSS destination
-
-	;A 68000 (d16,An) displacement is 16-bit SIGNED, but the package offsets run to
-	;$870c -- past $7fff, so `lea data_PACKn_OFFSET(a5),a1` silently wraps to a negative
-	;displacement (basm truncates without a warning) and ROM2 lands 30 KB before the
-	;buffer.  Build every destination with adda.l, which takes a full 32-bit immediate.
-		lea	(_romfile,pc),a0
-		move.l	a5,a1
-		move.l	#data_ROM0_SIZE,d0
-		move.l	#data_ROM0_OFFSET,d1
-		jsr	(resload_LoadFileOffset,a2)
-
-		lea	(_romfile,pc),a0
-		move.l	a5,a1
-		adda.l	#data_PACK1_OFFSET,a1
-		move.l	#data_ROM1_SIZE,d0
-		move.l	#data_ROM1_OFFSET,d1
-		jsr	(resload_LoadFileOffset,a2)
-
-		lea	(_romfile,pc),a0
-		move.l	a5,a1
-		adda.l	#data_PACK2_OFFSET,a1
-		move.l	#data_ROM2_SIZE,d0
-		move.l	#data_ROM2_OFFSET,d1
-		jsr	(resload_LoadFileOffset,a2)
-
-	;Reject a different 64 KB cartridge before the executable is entered.  CRC32 uses
-	;a 16-entry nibble table: small, and much faster than eight bit steps per byte.
-		move.l	a5,a0
-		move.l	#data_SIZE,d0
-		moveq	#-1,d1
-.crcbyte	moveq	#0,d2
-		move.b	(a0)+,d2
-		eor.l	d2,d1
-		move.l	d1,d2
-		and.w	#$f,d2
-		lsl.w	#2,d2
-		lsr.l	#4,d1
-		lea	(_crc_table,pc),a4	;68000 has no EOR mem-src and no proven
-		adda.w	d2,a4			;indexed mode here: build the entry address
-		move.l	(a4),d3			;then EOR register into the running CRC
-		eor.l	d3,d1
-		move.l	d1,d2
-		and.w	#$f,d2
-		lsl.w	#2,d2
-		lsr.l	#4,d1
-		lea	(_crc_table,pc),a4	;68000 has no EOR mem-src and no proven
-		adda.w	d2,a4			;indexed mode here: build the entry address
-		move.l	(a4),d3			;then EOR register into the running CRC
-		eor.l	d3,d1
-		subq.l	#1,d0
-		bne.s	.crcbyte
-		not.l	d1
-		cmp.l	#data_CRC32,d1
-		bne	.bad
-
-		move.l	#data_READY,12(a3)
-		movem.l	(a7)+,d2-d6/a3-a5
-		rts
-.next		addq.l	#4,a3
-		bra.w	.scan
-.bad		pea	TDREASON_WRONGVER
-		jmp	(resload_Abort,a2)
-
-_crc_table	dc.l	$00000000,$1db71064,$3b6e20c8,$26d930ac
-		dc.l	$76dc4190,$6b6b51f4,$4db26158,$5005713c
-		dc.l	$edb88320,$f00f9344,$d6d6a3e8,$cb61b38c
-		dc.l	$9b64c2b0,$86d3d2d4,$a00ae278,$bdbdf21c
 
 ;============================================================================
 ; The external-hook block.

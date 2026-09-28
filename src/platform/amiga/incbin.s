@@ -4,8 +4,7 @@
 	.include "rof_data_layout.inc"
 
 | User-owned cartridge data.  The normal/release executable reserves only BSS; the
-| WHDLoad slave finds rof_data_descriptor and loads three ranges from the installed
-| complete rof.rom.  An explicit STANDALONE_DATA build embeds the ignored package made
+| executable loads three ranges from the installed complete rof.rom at startup.  An explicit STANDALONE_DATA build embeds the ignored package made
 | by tools/extract_rom_data.py.  The descriptor itself contains no original data.
 	.section .data
 	.balign 4

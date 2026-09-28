@@ -77,17 +77,19 @@ why `_bootdos` aborts unconditionally instead of returning to the CLI: WHDLoad's
 `_bootdos` examples make that a choice (their `QUIT_AFTER_PROGRAM_EXIT` switch), but here
 returning would strand a 68000 user with no exit at all.
 
-### External cartridge data before entry
+### External cartridge data at executable startup
 
-The release `RoF` has a retained `RoF!DATA` descriptor but reserves its 42,726-byte game-data
-package as BSS. After `LoadSeg`, the slave scans the hunks for that descriptor, requires the
-installed `rof.rom` to be exactly 65,536 bytes, and loads the three generated-layout ranges
-directly into the BSS region. A CRC32 then rejects a same-sized but unsupported cartridge. The
-slave publishes the `RDF!` ready marker only after all reads and validation complete;
-the executable validates the descriptor, CRC32, and sentinels before reconstructing the four
-v4.1 computer boot stages. The complete ROM is copied by the installer, but is never included in
-the release archive. Constants come from `tools/rof_data_layout.py` via
-`whdload/rof_data_layout.i`, so the extractor, game, and slave share one range manifest.
+The release `RoF` retains its `RoF!DATA` descriptor and reserves the 42,726-byte package
+as BSS. The executable uses AmigaDOS to check the installed ROM's 65,536-byte size and
+read the three required ranges directly into BSS, then validates CRC32 and sentinels before
+reconstructing the four v4.1 boot stages. Failed reads or validation leave it unready and
+return AmigaDOS FAIL (20), before hardware takeover. The slave no longer loads game data.
+The installer still copies the complete user-provided ROM beside the executable in `data/`.
+Neither ROM nor extracted package is included in the release archive.
+
+Direct launches accept `data/rof.rom` or adjacent `rof.rom`. V36+ uses `PROGDIR:` first;
+Kickstart 1.3 uses the current directory (set from the startup message for Workbench).
+Shell users on 1.3 must change to the game directory before launching.
 
 ### `slv_Version = 17` and Custom1 border blanking
 

@@ -28,6 +28,11 @@ mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 # 1.3-clean; the WHDLoad install boots 1.3 through its own slave, not through this script.)
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
 cp -f out/RoF "$DH1/RoF"
+# Stage only a locally supplied cartridge; it is never part of a release.
+if [ -f "${ROF_ROM:-../rof.rom}" ]; then
+  mkdir -p "$DH1/data"
+  cp -f "${ROF_ROM:-../rof.rom}" "$DH1/data/rof.rom"
+fi
 
 fsuae_claim_port
 "$FSUAE" \

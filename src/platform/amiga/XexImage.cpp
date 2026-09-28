@@ -7,7 +7,7 @@
 // values and the original setup code (the INITAD chain ending at game_entry $3CDE)
 // establishes everything itself.
 //
-// The copyrighted source bytes come from rof_game_data: BSS populated by the WHDLoad slave
+// The copyrighted source bytes come from rof_game_data: BSS populated by executable startup
 // in the release build, or the ignored extracted package in an explicit standalone build.
 //
 // Integer types come from the project's force-included framework/SASCCompat.h

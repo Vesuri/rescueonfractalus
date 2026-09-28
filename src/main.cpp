@@ -10,6 +10,7 @@
 #if defined(ROF_PLATFORM_AMIGA)
   #include "PlatformAmiga.h"          /* src/platform/amiga — on the cross-build's -I path */
   #include <proto/exec.h>
+  #include <proto/dos.h>
   #include <dos/dosextens.h>          /* struct Process — pr_CLI, pr_MsgPort */
   #include <workbench/startup.h>      /* struct WBStartup */
 #else
@@ -74,7 +75,13 @@ static int runGame(const char* image) {
     /* Constructing PlatformClass brings up the platform (window/DMA/audio, loads
        the memory image) and sets the global Platform* pointer the C bridge uses. */
     PlatformClass plt(image);
-    if (plt.quit) return 1;
+    if (plt.quit) {
+#if defined(ROF_PLATFORM_AMIGA)
+        return 20; // AmigaDOS FAIL
+#else
+        return 1;
+#endif
+    }
 
     /* Build the 64KB mul_u8 lookup table ONCE, up front — before any game code runs.
        Otherwise it is built lazily on the first flight VBI ISR firing, a ~3.6s (7MHz 68000)
@@ -99,14 +106,21 @@ static int runGame(const char* image) {
 
 /* Default to the pristine rof.xex so every build boots the SAME initial state and
    game_entry code path.  Pass a path to boot a different image where the platform
-   supports it (SDL: a flat 64 KB .bin; Amiga ignores it — the image is embedded).
+   supports it (SDL: a flat 64 KB .bin; Amiga ignores it — cartridge data is loaded during startup).
    NOTE: the Amiga freestanding CRT (_start) calls main() with NO arguments, so the
    Amiga main takes none (a mismatched signature reads garbage off the stack). */
 #if defined(ROF_PLATFORM_AMIGA)
 int main(void) {
-    /* Before runGame(), because the platform it constructs opens dos.library. */
+    /* Take the Workbench message before any DOS call. */
     struct WBStartup* wbMsg = wbGetStartupMessage();
-    int rc = runGame("rof.xex");
+    DOSBase = (struct DosLibrary*)OpenLibrary((UBYTE*)"dos.library", 33);
+    BPTR oldDir = 0;
+    const bool changeDir = DOSBase && wbMsg && wbMsg->sm_NumArgs > 0 &&
+                           wbMsg->sm_ArgList[0].wa_Lock;
+    if (changeDir) oldDir = CurrentDir(wbMsg->sm_ArgList[0].wa_Lock);
+    int rc = DOSBase ? runGame("rof.xex") : 20;
+    if (changeDir) CurrentDir(oldDir);
+    if (DOSBase) { CloseLibrary((struct Library*)DOSBase); DOSBase = 0; }
     wbReplyStartupMessage(wbMsg);   /* strictly last — Workbench may unload us right after */
     return rc;
 }

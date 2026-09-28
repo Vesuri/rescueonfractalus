@@ -1,3 +1,7 @@
+> Updated startup contract: the release executable now loads and validates the ROM through
+> AmigaDOS itself, before hardware takeover. The slave only launches and configures the game.
+> The original implementation plan below records the v1.1 slave-loading design.
+
 # Externalising the original game data
 
 ## Decision

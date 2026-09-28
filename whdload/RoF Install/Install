@@ -202,8 +202,8 @@
     (				;----- 3 = DOS (Files) -----
 
       ;The executable contains no original game data.  Copy it, then ask for the user's
-      ;complete 64 KB XEGS cartridge image.  The slave validates its size and reads only
-      ;the three ranges required by the port into the executable's BSS data region.
+      ;complete 64 KB XEGS cartridge image.  The executable validates its size and reads only
+      ;the three ranges required by the port into its BSS data region at startup.
       (copyfiles
         (help @copyfiles-help)
 	(source "RoF")

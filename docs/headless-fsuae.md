@@ -17,12 +17,10 @@ where static reasoning kept failing — **measure, don't theorize.**
   `amiga/.run/gdb-out.log` (also echoes a filtered tail). Edit `diag_timing.gdb` to print
   whatever globals/`mem[0xNNNN]` you need (a `while $i < N ... end` loop dumps arrays).
   `-g` is always on (CORE_CFLAGS), so all globals are readable by name.
-- **⚠ Every headless build now needs a DATA SOURCE.** Since the game data was externalised to
-  `rof.rom` (the default build has data in BSS and only WHDLoad fills it), a plain `make -j4 PROBES=1`
-  boots to a blank/broken screen and never reaches flight. **Add `STANDALONE_DATA=1 ROM=../rof.rom`
-  to every headless recipe** (`diag_run.sh`, `fps_seg`, `prof_flight.sh`, any `VERIFY`/probe run) —
-  it embeds the extracted package the same way `make standalone` does, so `out/RoF` runs on its own
-  under the gdb stub. `../rof.rom` is the 64 KB XEGS cartridge in the repo root (git-ignored).
+- **Every headless build needs a data source.** The default executable now loads the ROM
+  itself. `run.sh`, `debug.sh`, and `diag_run.sh` stage `${ROF_ROM:-../rof.rom}` into the
+  emulated game's `data/rof.rom`. An embedded `STANDALONE_DATA=1 ROM=../rof.rom` development
+  build remains supported, but is no longer necessary for these harnesses.
 - **Build with probes:** `cd amiga && make clean && make -j4 PROBES=1 STANDALONE_DATA=1 ROM=../rof.rom`
   (→ `-DROF_FLIGHT_PROBE -DROF_TDRAW_PROF`); the `make clean` is mandatory (see the stale-build ⚠ below).
   This is OFF by default — the probes + auto-launch + timing accumulators are now PERMANENT,
