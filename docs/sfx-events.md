@@ -342,7 +342,7 @@ written to satisfy — for every slow outgoing note.
 
 **A write to AUDxPER changes only the RELOAD value. The countdown already in flight keeps its old
 duration**, and the channel reaches idle only after that countdown expires *and then* one more
-sample at the new period. Verified in `tmp/fs-uae/audio.cpp`: `AUDxPER` sets `cdp->per` and
+sample at the new period. Verified in `~/.local/share/amiga/fs-uae-src/audio.cpp`: `AUDxPER` sets `cdp->per` and
 deliberately does **not** touch `cdp->evtime`; `audio_state_channel2` leaves state 2/3 for
 `zerostate` only via state 3's period event. So the honest window is **`outgoing_per +
 kPaulaMinPer` ticks**, and the 7-line floor (1589 ticks) covers it only while the outgoing period
@@ -429,7 +429,7 @@ the Station's 4.1 `AUDCTL=$29` + `AUDF3=$28` asked the low half for 21826 Hz, cl
 minimum period 124, a squeal on every missile blip (`docs/rom-v50-diff.md` §4.8; that scene now
 adopts 5.0's un-chained `$01` for its own reasons, so the two fixes are independent).
 
-What real POKEY does — atari800's accurate model, `tmp/atari800/src/mzpokeysnd.c`
+What real POKEY does — atari800's accurate model, `~/.local/share/atari800-src/src/mzpokeysnd.c`
 `Update_c0divstart` … `Update_c3divstart`:
 
 | | divider (base-clock counts) |
@@ -561,7 +561,7 @@ eliminated, so do not re-derive them:
 reporting the bug in its own log.** `.run/gdb-out.log` carried 59 `Audio 3 DMA wait hack DISABLED
 … PER=9392` lines, each one FS-UAE saying "this channel was still mid-sample when you re-enabled
 its DMA". **Read the emulator's log before building an instrument** — and read the emulator's
-SOURCE (`tmp/fs-uae/audio.cpp`) before trusting a hardware-manual paraphrase: "AUDxPER takes effect
+SOURCE (`~/.local/share/amiga/fs-uae-src/audio.cpp`) before trusting a hardware-manual paraphrase: "AUDxPER takes effect
 immediately" was the paraphrase that cost this bug, and `AUDxPER`'s six lines disprove it.
 
 ⚠ **Do not close this on a quiet session.** A play-through right after the `$40` fix showed no wrong

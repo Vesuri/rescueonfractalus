@@ -50,5 +50,6 @@ tools/__pycache__/
 # savestate or RAM dump normally lands at the repo root, not in a800dumps/.
 /tmp/
 /a800dumps/
+/reference/
 *.a8s
 *.dat
