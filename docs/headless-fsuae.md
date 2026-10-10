@@ -1,8 +1,8 @@
 # Headless FS-UAE measure→fix→verify loop
 
-> Split out of `CLAUDE.md` 2026-08-10 to keep the always-loaded file small.
+> Split out of `AGENTS.md` 2026-08-10 to keep the always-loaded file small.
 > **Read this when writing a probe, driving FS-UAE headlessly, or debugging a stale build.**
-> `CLAUDE.md` §Build keeps the one-line summary and the `make clean` rule.
+> `AGENTS.md` §Build keeps the one-line summary and the `make clean` rule.
 
 Works great — use it instead of guessing. The agent can drive FS-UAE + gdb itself, with no display
 interaction, to measure real runtime state. This loop diagnosed several timing/render bugs precisely

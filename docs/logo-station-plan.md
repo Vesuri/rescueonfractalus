@@ -354,7 +354,7 @@ decodeStation IN  vbi=338                                                       
 `bootInst=1` is the whole bug: the list being rewritten was the live one. Geometry jumped 64→8
 leading lines and the palette gold→grey while the bitmap still held the logo, and the station's
 picture then painted itself in over ~4 displayed frames. It is also exactly the mid-frame
-bitplane-pointer swap `CLAUDE.md`'s copper rule forbids.
+bitplane-pointer swap `AGENTS.md`'s copper rule forbids.
 
 **Fix.** The entry branch installs the black `EmptyCopperList` and returns; the rebuild happens on
 the *next* call, when nothing is displaying either resource. `PlatformAmiga::renderFrame` waits for a
@@ -743,7 +743,7 @@ Things to watch, in the order they will bite:
 
 * The tall bitmap's plane pointers move **in the VBI ISR only** (`amiga-copper-lessons`).
 * `sfx_voice_tick` must be inert while `VVBLKI == $1B30`, or it fights `station_audio` for Paula.
-* `make clean` before any `PROBES=1` build and after touching a shared header (`CLAUDE.md`).
+* `make clean` before any `PROBES=1` build and after touching a shared header (`AGENTS.md`).
 * `station_star_fade_in` is the **star fade-in** — if the stars look black, that is the routine.
 
 ## 6. Decisions taken (2026-08-12, user)

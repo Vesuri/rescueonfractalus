@@ -52,7 +52,7 @@ enum RofStage {
                Launch sequence (Doors -> Tunnel -> Planet) plays out visibly.
    - flight  : auto-presses START and FAST-FORWARDS (unthrottled) through the
                Launch sequence, dropping straight into terrain Flight (~1s).
-   (docs/logo-station-plan.md covers the two boot scenes; CLAUDE.md has the
+   (docs/logo-station-plan.md covers the two boot scenes; AGENTS.md has the
     7-scene vocab: Logo, Station, Standby, Doors, Tunnel, Planet, Flight.)         */
 static RofStage rofStartStage() {
     static int cached = -1;

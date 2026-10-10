@@ -13,7 +13,7 @@ the measurement that says the *remaining* sites cost more than they save.
   **not** a ranked todo — do not reconstruct one from it)
 - measurement rules + harness traps → the `flight-measurement-rules` memory
 - asm twin design/phases → `docs/asm-migration-plan.md`
-- scene composition + instrument map → the `flight-scene` memory, CLAUDE.md
+- scene composition + instrument map → the `flight-scene` memory, AGENTS.md
 
 Rule of thumb when adding here: an OPEN item's number belongs in memory; the *story*, and
 **everything already shipped or closed**, belongs here. The compact rosters moved out of memory
@@ -395,7 +395,7 @@ are worth taking if anyone is in there anyway: pass the span as args instead of 
 
 ## 3. 68000 codegen lessons harvested from the twins
 
-General 68000 rules live in CLAUDE.md ("Optimising a native twin for the 68000"). These are the
+General 68000 rules live in AGENTS.md ("Optimising a native twin for the 68000"). These are the
 specific, measured ones from this scene.
 
 **From the `terrain_frame_setup` loop-1 rework (18b810e):**
@@ -1188,7 +1188,7 @@ touches those windows, and the whole family of scenes shares those buffers (the 
 
 - A test against a mask replicated into all four lanes is **byte-order independent** — nonzero iff
   some byte matches, whichever end they come from — so aliasing `mem[]` as a `volatile uint32_t` is
-  safe here, unlike a value read (CLAUDE.md's endianness rule). No value leaves the long: once a
+  safe here, unlike a value read (AGENTS.md's endianness rule). No value leaves the long: once a
   long tests nonzero its bytes are re-read individually through `mem[]`.
 - **Alignment is taken from the pointer, not the `mem[]` offset**, so nothing depends on where the
   linker put `mem[]`. (`$0F32` is even but not long-aligned; the prologue peels 2 bytes.)
@@ -1414,7 +1414,7 @@ the seven memory accesses is `(0,An,Dn.L)`** — 14 cycles of EA on a 68000, aga
 `kBandOW = kBandP1 | kBandP2`, so a byte with `ow == 0` also has `p1 == p2 == 0` and
 `(d & ~0) | 0 == d`. Rounding each row's `[lo,hi]` out to whole 4-byte groups therefore pulls in
 lanes that are a **genuine no-op RMW**, not an approximation — and since AND/OR/NOT are per-lane, the
-`uint32_t` alias is byte-order neutral (the safe case of CLAUDE.md's endianness rule, same as the
+`uint32_t` alias is byte-order neutral (the safe case of AGENTS.md's endianness rule, same as the
 plane3 long copy directly above it). Destination and caches are 4-aligned: `bp` is `AllocMem`'d, the
 scanline stride is 120, the plane stride 40, the cache row bases multiples of 40 — plus
 `__attribute__((aligned(4)))` on `s_bandP1c/P2c/OWc` to pin it.

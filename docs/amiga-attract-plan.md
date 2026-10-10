@@ -70,7 +70,7 @@ There are **three distinct screens**, not one:
 > long idle (attract timeout), on **SELECT or joystick-up from the initial Standby**
 > (both faithful — the same dispatch branch), or after a crash. Its pen cycle is a
 > ~11-minute attract effect, so a static card in short testing is not a bug —
-> see the `title-pen-cycle` memory. Canonical vocabulary lives in `CLAUDE.md`.
+> see the `title-pen-cycle` memory. Canonical vocabulary lives in `AGENTS.md`.
 
 **What was wrong in this plan:**
 - The architecture decision + **M6b** run screen-2's functions (`station_audio`,
@@ -833,7 +833,7 @@ three of its four items shipped long ago.** Corrected here so the tracker stops 
 | 1. Tunnel-clear/palette **sync drift** at the very end of the tunnel exit | ⏳ **still unaccounted for** — the only survivor. Related and also open-by-choice: the stars→tunnel transition is whole-buffer on `$008D` where the Atari sweeps row-by-row via DL-LMS (`docs/boost-cinematic-plan.md` §1), so the handoff may snap rather than sweep |
 | 2. **Star sprites** (event-queue/PMG-driven, `$5614`/`$548D`/`$5667`) | ✅ **done** — `buildStarSprites()` in `RescueOnFractalus.cpp` builds them into the sprite ring; the stars beat is no longer black space |
 | 3. **Flight hand-off** (`$6594` RTS → gameplay) | ✅ **done** — the flight terrain renderer has been on the Amiga since; the cinematic hands off to gameplay |
-| 4. **Scene 3b** | ✅ **analysed and ported** 2026-08-03, and **renamed Title Screen** — see the corrected screen table at the top of this file and `CLAUDE.md`'s phase vocabulary |
+| 4. **Scene 3b** | ✅ **analysed and ported** 2026-08-03, and **renamed Title Screen** — see the corrected screen table at the top of this file and `AGENTS.md`'s phase vocabulary |
 
 **Where live notes go now:** cross-session in-progress state lives in the auto-memory index
 (`MEMORY.md`), and this file is the per-area *plan/record*. ⚠ Do not re-add an "open" list here that

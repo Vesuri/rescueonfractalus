@@ -497,7 +497,7 @@ extern "C" void flight_vbi_native(void)
     // hardware reads), so only an #ifdef removes them.
 #ifdef ROF_FLIGHT_PROBE
     unsigned short a = beam_line();      // sub-frame profiler timer (FULL probe-ISR span)
-    // ZP write-set audit (rasterizer-alias safety, see CLAUDE.md): snapshot ZP before the
+    // ZP write-set audit (rasterizer-alias safety, see AGENTS.md): snapshot ZP before the
     // handler, diff after.  These two 256-iter loops are PROBE-ONLY overhead (~70 beam
     // lines/firing of volatile mem[] traffic) — absent from the real probe-off build.  So
     // bracket the HANDLER separately (a2..b2) and report THAT as isrLines (the real VBI cost),

@@ -1,6 +1,6 @@
 # Instrument vocabulary — "Valkyrie Fighter Control Panel"
 
-> Split out of `CLAUDE.md` 2026-08-10 to keep the always-loaded file small.
+> Split out of `AGENTS.md` 2026-08-10 to keep the always-loaded file small.
 > **Read this when working on the cockpit / HUD / any named instrument, or on enemies and
 > terrain objects.** Use these names in code/comments/commits.
 

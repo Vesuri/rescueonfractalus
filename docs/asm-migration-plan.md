@@ -23,7 +23,7 @@ Two goals, in order:
 > (shipping shares + which-harness-answers-what), **not** a ranked TODO; measurement rules in
 > `flight-measurement-rules`.
 
-## Current asm roster (moved verbatim from CLAUDE.md 2026-08-10)
+## Current asm roster (moved verbatim from AGENTS.md 2026-08-10)
 
 Hand-written m68k asm is the norm for hot paths + framework routines (`-DNO_ASSEMBLER` is gone;
 `vasmm68k_mot -m68010 -Felf` assembles the `.s`). Done: the framework `*Assembler.s` (GCC bridges);
@@ -62,7 +62,7 @@ render-diff).
 
 ## Phase 0 — scrub the `NO_ASSEMBLER` references (do as each is no longer load-bearing)
 
-`CLAUDE.md:150` already reworded. Remaining (remove/adjust as the flag goes away — do NOT remove the
+`AGENTS.md:150` already reworded. Remaining (remove/adjust as the flag goes away — do NOT remove the
 `Makefile:131` flag or the `Util.h:11` gate until Phase 1 actually links the asm, or the build breaks):
 - `amiga/Makefile:1, 9, 95` (comments) and `:131` (the `-DNO_ASSEMBLER` flag itself — remove in P1).
 - `amiga/ARCH.md:34, 43`.
@@ -529,7 +529,7 @@ dbra   d2,.lp  ; 10        => 36 cycles for an inactive slot
 
 Ten cycles per slot × 12 slots × 1.14 scans/call. **On the 68000 the loop bookkeeping (18 cyc)
 costs more than autoincrement saves over absolute addressing (8 cyc).** This is the boundary of
-CLAUDE.md's "pointer-walk with autoincrement, never multiply+index in a loop" rule: that rule
+AGENTS.md's "pointer-walk with autoincrement, never multiply+index in a loop" rule: that rule
 kills a `mulu`+index, it does **not** beat an unrolled absolute scan. v1 also imposed a
 10-register `movem` (~180 cycles of prologue+epilogue) against GCC's 3 (~68) — a handicap on its
 own larger than everything the twin saved.

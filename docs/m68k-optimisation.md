@@ -1,9 +1,9 @@
 # Optimising a native twin for the 68000 (hard-won; apply when a function is hot)
 
-> Split out of `CLAUDE.md` 2026-08-10 to keep the always-loaded file small.
+> Split out of `AGENTS.md` 2026-08-10 to keep the always-loaded file small.
 > **Read this before optimising any hot function or writing an asm twin.** The two rules that
 > must not be violated even without reading this file (RAM is uniformly slow; never emit a 32-bit
-> software mul/div) are stated in `CLAUDE.md` §Hard rules.
+> software mul/div) are stated in `AGENTS.md` §Hard rules.
 > Companions: `docs/perf-budget.md` (what the numbers mean), `docs/asm-migration-plan.md`,
 > `docs/flight-perf-log.md`.
 

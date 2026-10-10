@@ -26,7 +26,7 @@
 ; A "clean" pointer-walked loop (`tst.b (a0)+` 8 + `beq.s` 10 + `addq.l #1,a1` 8 + `dbra` 10 =
 ; 36) is 10 cycles per slot WORSE, because on the 68000 the 18 cycles of loop bookkeeping cost
 ; more than the 8 cycles that (a0)+ saves over absolute addressing.  ⚠ This is the limit of the
-; CLAUDE.md "pointer-walk with autoincrement" rule: that rule is about killing a mulu+index in
+; AGENTS.md "pointer-walk with autoincrement" rule: that rule is about killing a mulu+index in
 ; a loop, NOT about beating an unrolled absolute scan.  So this twin UNROLLS too (below), and
 ; keeps only the parts where hand-asm genuinely wins:
 ;   - a 5-register movem instead of 10 (the v1 mistake: 180 cycles of prologue/epilogue against

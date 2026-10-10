@@ -81,7 +81,7 @@ TARGET   := build/rof
 # `make validate MEMBASE=1` straight after a plain `make validate` RELINKED stale objects and re-ran
 # the whole suite against the code with the fold switched OFF — a vacuous green indistinguishable
 # from a real pass (caught 2026-08-14: rof_native.o was 15 minutes older than the validate_native it
-# was linked into).  Same class as the Amiga Makefile's `make clean` before PROBES=1 (CLAUDE.md).
+# was linked into).  Same class as the Amiga Makefile's `make clean` before PROBES=1 (AGENTS.md).
 #
 # This runs at PARSE time, before make builds its dependency graph: if the recorded flag set differs
 # it deletes the affected objects, so make simply sees them as missing.  No timestamps, no stamp

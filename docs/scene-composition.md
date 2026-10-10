@@ -1,8 +1,8 @@
 # Scene composition reference (DL / screen modes / PMG / windscreen-frame elements)
 
-> Split out of `CLAUDE.md` 2026-08-10 to keep the always-loaded file small.
+> Split out of `AGENTS.md` 2026-08-10 to keep the always-loaded file small.
 > **Read this when working on a specific scene's screen composition / copper list.**
-> Scene names and numbers are in `CLAUDE.md` §Phase vocabulary.
+> Scene names and numbers are in `AGENTS.md` §Phase vocabulary.
 
 Hard-won base findings so we don't re-derive them. **Verify addresses against a live dump
 before trusting** (use `/atari-dl-analyzer` + headless `atari800`).

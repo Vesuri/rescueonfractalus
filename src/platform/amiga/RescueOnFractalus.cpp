@@ -2039,7 +2039,7 @@ void RescueOnFractalus::buildShotSprite()
 // into all four lanes is BYTE-ORDER INDEPENDENT (nonzero iff some byte matches, whichever end the
 // bytes come from), so aliasing mem[] as a volatile uint32_t is safe here — unlike a value read,
 // which would byte-swap between the big-endian Amiga and the little-endian validation host (see
-// CLAUDE.md, "Endianness when aliasing mem[]").  No value ever leaves the long: once a long tests
+// AGENTS.md, "Endianness when aliasing mem[]").  No value ever leaves the long: once a long tests
 // nonzero its four bytes are re-read individually through mem[] to find which one matched.
 // Alignment is taken from the POINTER, not from the mem[] offset, so nothing depends on where the
 // linker put mem[] (a misaligned long read is an address fault on the 68000).
@@ -3106,7 +3106,7 @@ void RescueOnFractalus::initialize()
         energyIndicatorSprite->setY(0x2c + 144);
     // Altimeter terrain-height bar (P0 $0C98): same cockpit scanline band as the energy
     // indicator (both are player strips at buffer offset $98 → Amiga Y 0x2c+144), placed
-    // left of it (CLAUDE.md instrument x≈108).  Starting estimate — calibrate visually.
+    // left of it (AGENTS.md instrument x≈108).  Starting estimate — calibrate visually.
         altimeterSprite->setX(0x81 + 107);
         altimeterSprite->setY(0x2c + 144);
     // Ship-height bar (M3 missile): the SAME 8px column as the terrain bar (they overlap —
@@ -4708,7 +4708,7 @@ void RescueOnFractalus::renderFlightDirect()
     // first cut of this indexed the caches as s_bandXc[hf][row*40+b], which put a 2D address
     // computation (and a row*40) inside a 40-iteration loop and measured almost no better than the
     // per-byte decode it replaced (39 -> 36 ticks).  See the "pointer-walk with autoincrement,
-    // never multiply+index in a loop" rule in CLAUDE.md.
+    // never multiply+index in a loop" rule in AGENTS.md.
     const unsigned hf = g_flightRenderHalf ? 1u : 0u;
     uint32_t* shad = s_bandShadow[hf];                    // 10 longs/row
     uint32_t* p3c  = s_bandP3c[hf];                       // 10 longs/row
@@ -4900,7 +4900,7 @@ void RescueOnFractalus::renderFlightDirect()
             // `(0,An,Dn.L)`, see the disassembly): kBandOW = kBandP1|kBandP2, so ow==0 implies
             // p1==p2==0 and (d & ~0)|0 == d.  Every lane's AND/OR/NOT is independent of the others,
             // so the uint32_t alias is byte-order neutral — the safe case of the endianness rule in
-            // CLAUDE.md, like the plane3 long copy above.  No per-long zero test: the measured ow
+            // AGENTS.md, like the plane3 long copy above.  No per-long zero test: the measured ow
             // map has no all-zero group inside any row's range
             // — row 44 `...11...`, row 45 `.111 1111 ... 111.`, row 46 `...11...` — so the test
             // would be pure cost.  Alignment: vrow = bp (AllocMem, 8-aligned) + 120*row, the plane
@@ -6913,7 +6913,7 @@ void RescueOnFractalus::renderBootScene()
         // then overwrites the very bitmap it is fetching.  At the Logo->Station handover the ~70 ms
         // decodeStationField spans several displayed frames, so the station's picture paints itself
         // into the logo's geometry, in the station's greys, on top of the Lucasfilm logo — and it is
-        // exactly the mid-frame bitplane-pointer swap CLAUDE.md's copper rule forbids.  Nothing else covers this window: the black-until-ready hold in
+        // exactly the mid-frame bitplane-pointer swap AGENTS.md's copper rule forbids.  Nothing else covers this window: the black-until-ready hold in
         // renderFrame is BELOW the boot-scene branch, and rof_boot_chain's stage loads render no
         // frames at all, so whatever list was last installed simply stays live across the gap.
         //

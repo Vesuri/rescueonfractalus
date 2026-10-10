@@ -256,7 +256,7 @@ memory** — read it before touching this; do not re-derive. Note the scene-ROUT
   points at it — a colour write the same frame the bitmap is decoded shows the OLD colour that frame
   (writes lag the bitmap by one frame). If a palette source is seeded a frame late by the faithful game
   code (e.g. $08D4-9), DEFER installing/showing content until it's valid. (Same 1-frame rule as bitplane
-  pointer swaps — CLAUDE.md.)
+  pointer swaps — AGENTS.md.)
 - **The boost tunnel is the SAME animating $1000 field as the forward tunnel** — decode it linearly
   (row r → $1000+r*46, as decodeTunnelRect). Do NOT decode from the $3000 DL LMS as an address (its
   rev-strand addresses are mirrored/misform it); the DL is only a per-row REVEAL FLAG.

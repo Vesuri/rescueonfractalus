@@ -9,7 +9,7 @@
 ;   - ROF_FIELD_PLOT is a NO-OP (nothing reads the mode-D field on Amiga), so the
 ;     $80/$81 bitmap-row scratch is never touched.
 ;   - $B5 ("b5=depth"/disp), the $95/$EA/$F4 control-point STACK residue for depth>0,
-;     and $60 are all dead after the call (CLAUDE.md VBI ZP audit + the subdivide caller
+;     and $60 are all dead after the call (AGENTS.md VBI ZP audit + the subdivide caller
 ;     only reads $82/$84/$86 + the sub-point stacks back).  So the control-point stack
 ;     lives in a PRIVATE register-walked scratch buffer and only slot [0] is seeded from
 ;     mem[$95/$EA/$F4].  The sole live writeback is the running cursor -> $82/$84/$86.

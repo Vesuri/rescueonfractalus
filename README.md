@@ -141,7 +141,7 @@ Crockford, David Levine and Peter Langston. Full credits are in the manual.
 This port is an unofficial, non-commercial fan project, not affiliated with or endorsed by
 Lucasfilm.
 
-Developer documentation lives in [`CLAUDE.md`](CLAUDE.md) and [`docs/`](docs/).
+Developer documentation lives in [`AGENTS.md`](AGENTS.md) and [`docs/`](docs/).
 
 ### Host-built WHDLoad release
 

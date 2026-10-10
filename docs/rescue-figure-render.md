@@ -147,7 +147,7 @@ bound by GCC's register allocation, not by the instruction stream:
   at first, and **+53 t** even with only the hot fields copied. Inlined with the hot state in
   locals is what wins; `always_inline` on the helpers is load-bearing.
 * A 7-byte `rof_figcol`: the cell loop's pointer difference `/ sizeof` became a **`__mulsi3`
-  call** — a CLAUDE.md hard-rule violation the objdump audit catches. Hence the explicit `pad`
+  call** — a AGENTS.md hard-rule violation the objdump audit catches. Hence the explicit `pad`
   byte holding `sizeof` at 8, and an index loop rather than a pointer-difference loop.
 
 ### ⛔ Levers NOT taken — recorded so nobody re-derives them, not as a TODO
@@ -303,5 +303,5 @@ it "worked when it landed" and still does; only the resume-frame dot dropout is 
 - `src/gen/rof_native.c`: `rof_plotrun` + `rof_figcol` (the plot split, above
   `plot_clipped_pixel_core`); `ROF_CLEAR_FIG`; `g_flightDotPlane`,
   `g_flightTerrainFresh`.
-- Double-buffer discipline: see CLAUDE.md "⚠ Swapping copper bitplane POINTERS must happen in the VBI
+- Double-buffer discipline: see AGENTS.md "⚠ Swapping copper bitplane POINTERS must happen in the VBI
   ISR" — torn/wrong flips show as exactly this modulo shear.

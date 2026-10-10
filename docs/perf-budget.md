@@ -1,8 +1,8 @@
 # Flight performance budget — judge every number against this
 
-> Split out of `CLAUDE.md` 2026-08-10 to keep the always-loaded file small.
+> Split out of `AGENTS.md` 2026-08-10 to keep the always-loaded file small.
 > **Read this before quoting, sizing or judging any performance number.** The headline target
-> and the two hard measurement rules are summarised in `CLAUDE.md` §Performance.
+> and the two hard measurement rules are summarised in `AGENTS.md` §Performance.
 > Companions: `docs/asm-migration-plan.md` (the asm twins), `docs/flight-perf-log.md` (the full
 > investigation archive), the `flight-pc-profiler` + `flight-measurement-rules` memories (ranked
 > TODO and per-change history).

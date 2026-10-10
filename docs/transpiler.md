@@ -1,9 +1,9 @@
 # Transpiler internals — generated-code shape
 
-> Split out of `CLAUDE.md` 2026-08-10 to keep the always-loaded file small.
+> Split out of `AGENTS.md` 2026-08-10 to keep the always-loaded file small.
 > **Read this when working on `tools/transpile.py`, or when the shape of generated
 > `rof_gen.c` code is surprising.** The parts you need for everyday work — the file table, the
-> native-twin seam, and which file a twin belongs in — stay in `CLAUDE.md` §Transpiler.
+> native-twin seam, and which file a twin belongs in — stay in `AGENTS.md` §Transpiler.
 
 ## Named memory accesses (`mem.h`) — full rationale
 
@@ -69,7 +69,7 @@ against each other in a standalone program, which is what lets it cover code the
 them. So `make validate MEMBASE=1` immediately after a plain `make validate` **relinked the stale
 objects and re-ran all 28 fixtures against the code with the fold switched OFF** — a full PASS that
 proved nothing. Caught 2026-08-14 by noticing `rof_native.o` was 15 minutes older than the
-`validate_native` it had just been linked into. Exactly the class of trap CLAUDE.md already records
+`validate_native` it had just been linked into. Exactly the class of trap AGENTS.md already records
 for the Amiga Makefile's `make clean` before `PROBES=1`.
 
 Fixed by a **parse-time guard** in the root `Makefile`: a `$(shell …)` that compares the flag set

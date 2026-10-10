@@ -269,7 +269,7 @@ read with `amiga/diag_alien.gdb`.  Beam ticks; 313 t = 1 frame = 20 ms; faithful
   a perf number.  The knock stays user-flown; see [[interactive-fsuae-gdb]] for the SIGINT recipe.
 - ⚠ `PROFILE_NORING=1` remains load-bearing (session 6: without it the debug ring's `rfPlaneSum`
   scans are ~85% of the "render" sample).  ⚠ A `PROBES=1` build shows 9 `jsr __udivsi3` sites
-  (probe math); the CLAUDE.md audit is only meaningful on a **plain** build — verified empty at 1dea72e.
+  (probe math); the AGENTS.md audit is only meaningful on a **plain** build — verified empty at 1dea72e.
 
 ## ★★ SESSION 8 (2026-08-10, 50869ee + aedac9c) — a headless bench, a 35% measurement artifact, −22.7%
 

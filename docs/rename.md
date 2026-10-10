@@ -8,7 +8,7 @@ regenerate (`make gen`). Hand-written twins (`rof_native.c`, `rof_native_amiga.c
 directly and must be updated in the same pass.
 
 > **When you find a misnamed function, append a new section here** (address, current name, actual
-> behaviour, suggested name) — per `CLAUDE.md` §Working conventions, file it the moment you find
+> behaviour, suggested name) — per `AGENTS.md` §Working conventions, file it the moment you find
 > it, don't defer.
 >
 > This file is the *pending* list plus the durable rules below. Applied renames are **not** logged

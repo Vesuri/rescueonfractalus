@@ -1,6 +1,6 @@
 # Controls (Atari manual → Amiga port)
 
-> Split out of `CLAUDE.md` 2026-08-10 to keep the always-loaded file small.
+> Split out of `AGENTS.md` 2026-08-10 to keep the always-loaded file small.
 > **Read this when touching input, the keyboard/console path, Standby SELECT, or BREAK/restart.**
 
 The Atari controls (game manual) and the Amiga key chosen for each in the port. Two distinct

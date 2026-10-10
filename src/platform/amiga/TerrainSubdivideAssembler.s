@@ -634,7 +634,7 @@ sd_out:
 	; so the {lo at $82, hi at $83} pair is one word store of the BYTE-SWAPPED d2 — 42
 	; cycles against the 58 of move.b/move.l/lsr.w #8/move.b.  $82 and $84 are even and
 	; mem is aligned(4) (cpu.c), so the word access cannot fault; the flight VBI writes
-	; none of $82-$86 (CLAUDE.md ZP write-set), so the wider store races nothing.
+	; none of $82-$86 (AGENTS.md ZP write-set), so the wider store races nothing.
 	move.w	d2,d0			; flush span
 	ror.w	#8,d0
 	move.w	d0,mem+$82		; $82 = span.col lo, $83 = hi

@@ -3,7 +3,7 @@
 Retrospective on the *Rescue on Fractalus!* port pipeline (Ghidra → transliterate 6502 → C →
 abstract hardware → platform backends), written to carry forward into a **future binary-only
 port**. This is not a to-do for *this* project — it is a "what I'd do differently next time"
-distilled from the decision trail in `CLAUDE.md`, the memory topic files, and git history.
+distilled from the decision trail in `AGENTS.md`, the memory topic files, and git history.
 
 > One-sentence version: **the biggest wins are all "build the discovery and validation
 > infrastructure exhaustively up front instead of growing it reactively."** Complete
