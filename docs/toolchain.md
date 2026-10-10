@@ -12,7 +12,7 @@ macOS (Apple Silicon).
 | Python 3.11 | `python3` (pyenv) | XEX tools, transpiler |
 | clang / make | system | building the SDL host port (`make` at the repo root) |
 | SDL2 | homebrew | the macOS dev/profiling backend |
-| `m68k-amiga-elf-*` + `vasmm68k_mot` + `elf2hunk` + patched FS-UAE | `~/.local` (on `PATH` via `. amiga/env.sh`) | the Amiga cross-build, from BartmanAbyss `vscode-amiga-debug` — its gcc/gdb/elf2hunk/FS-UAE are mutually matched, which is what makes source-level debugging work |
+| `m68k-amiga-elf-*` + `vasmm68k_mot` + `elf2hunk` + patched FS-UAE | `~/.local`, installed by AmigaXDev (`make setup`; on `PATH` via `. amiga/env.sh`, which sources its shared `env.sh`) | the Amiga cross-build, from BartmanAbyss `vscode-amiga-debug` — its gcc/gdb/elf2hunk/FS-UAE are mutually matched, which is what makes source-level debugging work |
 | `atari800` | homebrew | the Atari ground-truth emulator (FIFO monitor mode) |
 
 ⚠ **The Amiga toolchain must live at a space-free path** (hence `~/.local`, not

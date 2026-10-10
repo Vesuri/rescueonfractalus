@@ -12,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--lha", default=os.environ.get(
-        "LHA", str(Path.home() / ".local/opt/lha/bin/lha")))
+        "LHA", str(Path.home() / ".local/share/amiga/lha-compressor/src/lha")))
     args = parser.parse_args()
     compressor = shutil.which(args.lha)
     if not compressor:

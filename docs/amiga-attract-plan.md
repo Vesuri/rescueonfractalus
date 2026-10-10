@@ -178,10 +178,9 @@ pointer swaps.  Everything above that line is RoF's own:
   §11.8 — that table is the contract for milestones M3–M5.
 
 ### Prerequisites (resolved)
-- **KS 3.1 Kickstart ROM:** `~/Documents/RetroPie/BIOS/kick31.rom`
-  (→ `kick40063.A600`, 512 KB — auto-boots directory HDs). `amiga/env.sh` should
-  default `KICKSTART` to it; the run scripts read `$KICKSTART` or `$1`.
-  (KS 1.3 `kick13.rom` and 2.0 `kick20.rom` also live there — don't use them,
+- **KS 3.1 Kickstart ROM:** the shared `kick40063.A600` (512 KB — auto-boots
+  directory HDs) that AmigaXDev installs; `amiga/env.sh` defaults `KICKSTART` to
+  it and the run scripts read `$KICKSTART` or `$1`. (Don't use KS 1.3 or 2.0 —
   KS 1.3 stalls on directory HDs.)
 
 ### Parity workflow (used every milestone)

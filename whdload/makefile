@@ -1,9 +1,10 @@
 # Host cross-build; the original BASM rules are in Makefile.amiga.
+# Defaults as amiga/env.sh (the shared AmigaXDev environment, with WHDLoad 19.2).
 WHDLOAD ?= $(HOME)/.local/share/amiga/WHDLoad
 NDK ?= $(HOME)/.local/opt/m68k-amiga-elf/sys-include
 VASM ?= $(HOME)/.local/vasmm68k_mot
 VASMFLAGS ?=
-LHA ?= $(HOME)/.local/opt/lha/bin/lha
+LHA ?= $(HOME)/.local/share/amiga/lha-compressor/src/lha
 export LHA
 
 .PHONY: all enhanced tune release dist clean FORCE

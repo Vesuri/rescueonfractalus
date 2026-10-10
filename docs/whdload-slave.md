@@ -227,7 +227,7 @@ host, because a real 1.3 ROM is what the kickemu boots anyway:
   chunk for chunk. It is what found the 38,712-byte chip + 240-byte fast leak fixed on
   2026-09-02, and it covers every allocation regardless of how far the run gets, because all
   of them live in `RescueOnFractalus::initialize()`.
-* Booting `run.sh` with a **Kickstart 1.3 ROM** (`./run.sh ~/Documents/RetroPie/BIOS/kick13.rom`,
+* Booting `run.sh` with a **Kickstart 1.3 ROM** (`./run.sh "$KICK13"`,
   `AMIGA_MODEL=A500`) would run the game under the same OS version the slave boots, from a
   real CLI; then shrink `--chip_memory` / `--fast_memory` (`EXTRA_ARGS=`) until it stops
   working to bracket the requirement, with nothing assembled. ⚠ **Untested** — `run.sh` uses
@@ -252,21 +252,11 @@ assembles the release slave, audits the game for embedded cartridge data, and pa
 published archive's ten member paths. `make -C whdload dist` and the earlier
 `make -C whdload release` are equivalent. No cartridge or Kickstart ROM is packaged.
 
-The compressor defaults to `~/.local/opt/lha/bin/lha`; override it with
-`make dist LHA=/path/to/lha`. Homebrew's `lha` from **lhasa** only extracts and
-cannot create this archive. The compressor used here is
-[LHa for UNIX](https://github.com/jca02266/lha), revision
-`16619b066b189ef289bb8b07b37d1c38d550da99`. One-time setup (C compiler,
-autoconf and automake required; choose a source path without spaces for its tests):
-
-```sh
-git clone https://github.com/jca02266/lha.git /tmp/rof-lha
-cd /tmp/rof-lha
-git checkout 16619b066b189ef289bb8b07b37d1c38d550da99
-autoreconf -is
-./configure --prefix="$HOME/.local/opt/lha"
-make && make check && make install
-```
+The compressor defaults to the shared `~/.local/share/amiga/lha-compressor/src/lha`
+(`$LHA` from `amiga/env.sh`); override it with `make dist LHA=/path/to/lha`. Homebrew's
+`lha` from **lhasa** only extracts and cannot create this archive. The compressor is
+[LHa for UNIX](https://github.com/jca02266/lha) at revision
+`16619b066b189ef289bb8b07b37d1c38d550da99`, which AmigaXDev's `make setup` builds.
 
 For individual steps:
 

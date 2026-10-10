@@ -3,10 +3,10 @@
 # breaks in and prints the standby-build timing probes.
 set -uo pipefail
 cd "$(dirname "$0")"
-. "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
-FSUAE="${FSUAE:-fs-uae}"
+. ./env.sh
+. "$FSUAE_COMMON"
 GDB="${GDB:-m68k-amiga-elf-gdb}"
-ROM="${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}"
+ROM="$KICKSTART"
 DELAY="${1:-14}"
 # Emulated machine.  Default A500+ (the target, + ECS Denise for BPLCON3 border-blanking).
 # $AMIGA_MODEL=A1200 re-runs the same probe on a 68020 to expose beam-timing races that a
@@ -35,16 +35,14 @@ if [ -f "${ROF_ROM:-../rof.rom}" ]; then
 fi
 
 fsuae_claim_port
-"$FSUAE" \
-  --amiga_model="$MODEL" --chip_memory=1024 --fast_memory=8192 \
-  --kickstart_file="$ROM" \
+# Quiet debug run (no sound, window behind the others): fsuae_options in $FSUAE_COMMON;
+# it also passes $EXTRA_ARGS.
+KICKSTART="$ROM" AMIGA_MODEL="$MODEL" CHIP_KB=1024 FAST_KB=8192 DEBUG=1
+fsuae_options
+FSUAE_LOG="$RUN/fsuae-dbg.log" fsuae_launch \
   --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
-  --automatic_input_grab=0 --fullscreen=0 --window_width=720 --window_height=568 \
-  $EXTRA_ARGS \
-  --remote_debugger=20 --remote_debugger_port="$DEBUG_PORT" --remote_debugger_trigger=RoF \
-  --ntsc_mode=0 --state_dir="$RUN/state" > "$RUN/fsuae-dbg.log" 2>&1 &
-FSUAE_PID=$!
-fsuae_track "$FSUAE_PID"
+  --window_width=720 --window_height=568 \
+  --remote_debugger_trigger=RoF --state_dir="$RUN/state"
 echo "FS-UAE pid=$FSUAE_PID; waiting for stub..."
 for i in $(seq 1 60); do
   kill -0 "$FSUAE_PID" 2>/dev/null || { echo "FS-UAE exited early; see $RUN/fsuae-dbg.log"; exit 1; }

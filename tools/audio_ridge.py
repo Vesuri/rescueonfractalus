@@ -5,7 +5,7 @@ Capture the stream with SDL2's disk audio driver (no sound card involved, so the
 what FS-UAE produced):
     SDL_AUDIODRIVER=disk SDL_DISKAUDIOFILE=/tmp/rof.raw ... ./run.sh
 Format is whatever FS-UAE opened the device with — 44100 Hz, S16LSB, 2 channels (see
-~/.local/share/fs-uae/fs-uae.log, "[AUD] Opened audio device").
+amiga/.run/fsuae/Cache/Logs/fs-uae.log.txt, "[AUD] Opened audio device").
 
 Usage: audio_ridge.py FILE.raw [t0 t1]
 Prints, per time slice, the strongest partials, and flags any ridge whose frequency FALLS while

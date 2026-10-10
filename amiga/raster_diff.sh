@@ -6,22 +6,24 @@
 # Source ../env.sh first (fs-uae + gdb on PATH).  Needs out/RoF built PROBES=1.
 set -uo pipefail
 cd "$(dirname "$0")"
-. "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
-FSUAE="${FSUAE:-fs-uae}"; GDB="${GDB:-m68k-amiga-elf-gdb}"
-ROM="${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}"
+. ./env.sh
+. "$FSUAE_COMMON"
+GDB="${GDB:-m68k-amiga-elf-gdb}"
+ROM="$KICKSTART"
 LABEL="${1:-verify}"; DELAY="${2:-90}"; GDBSCRIPT="${GDBSCRIPT:-raster_verify.gdb}"
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"; GDBHOME="$RUN/gdbhome"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
 cp -f out/RoF "$DH1/RoF"
 fsuae_claim_port
-"$FSUAE" --amiga_model=A500+ --chip_memory=1024 --fast_memory=8192 \
-  --kickstart_file="$ROM" --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
-  --automatic_input_grab=0 --fullscreen=0 --window_width=720 --window_height=568 \
-  --remote_debugger=20 --remote_debugger_port="$DEBUG_PORT" --remote_debugger_trigger=RoF \
-  --ntsc_mode=0 --state_dir="$RUN/state" > "$RUN/fsuae-dbg.log" 2>&1 &
-FSUAE_PID=$!
-fsuae_track "$FSUAE_PID"
+# Quiet debug run (no sound, window behind the others): fsuae_options in $FSUAE_COMMON;
+# it also passes $EXTRA_ARGS.
+KICKSTART="$ROM" AMIGA_MODEL=A500+ CHIP_KB=1024 FAST_KB=8192 DEBUG=1
+fsuae_options
+FSUAE_LOG="$RUN/fsuae-dbg.log" fsuae_launch \
+  --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
+  --window_width=720 --window_height=568 \
+  --remote_debugger_trigger=RoF --state_dir="$RUN/state"
 for i in $(seq 1 60); do
   kill -0 "$FSUAE_PID" 2>/dev/null || { echo "FS-UAE exited early"; exit 1; }
   lsof -nP -iTCP:"$DEBUG_PORT" -sTCP:LISTEN >/dev/null 2>&1 && break; sleep 1

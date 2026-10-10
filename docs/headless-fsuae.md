@@ -10,7 +10,9 @@ where static reasoning kept failing — **measure, don't theorize.**
 
 - **`. ./env.sh` MUST be sourced in the SAME shell command** as the run — it puts BOTH
   `fs-uae` (`~/.local/fs-uae`) and `m68k-amiga-elf-gdb` on PATH. The Bash tool doesn't
-  persist a separate `. env.sh`, so `fs-uae` looks "not found" otherwise.
+  persist a separate `. env.sh`, so `fs-uae` looks "not found" otherwise. The harness
+  scripts source it themselves, and run silently with the window behind the others
+  (`WINDOW=none`: no window at all); FS-UAE's own log is `amiga/.run/fsuae/Cache/Logs/fs-uae.log.txt`.
 - **`amiga/diag_run.sh [delay]`** = the batch harness: boots `out/RoF` under the
   FS-UAE gdb stub, runs `[delay]` seconds, SIGINTs gdb (breaks its `continue`), runs the
   print commands in **`amiga/diag_timing.gdb`**, and writes everything to

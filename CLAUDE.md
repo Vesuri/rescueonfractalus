@@ -77,7 +77,7 @@ the snapshot". Rationale + the caveat in full: the `hostproof` block in `Makefil
 
 ### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
 ```
-. env.sh        # put the ~/.local Amiga toolchain on PATH (source it first, SAME command)
+. env.sh        # the shared AmigaXDev environment: toolchain on PATH, Kickstarts, WHDLoad 19.2 (SAME command)
 make            # build out/RoF — BSS, loads data/rof.rom at startup
 make standalone ROM=../rof.rom   # runnable out/RoF with the game data embedded (Workbench/Shell/emu)
 ./run.sh        # boot in FS-UAE (Kickstart 3.1; left mouse button quits)
@@ -92,7 +92,8 @@ their own emulator at the same time.  The run/debug/probe scripts source
 `~/.local/share/amiga/fsuae_common.sh` (shared, outside every repo; `$FSUAE_COMMON` overrides the
 path), which kills only the pid this directory's previous run recorded in `.run/fsuae.pid` and
 gives each project its own gdb-stub `$DEBUG_PORT`.  Stop a stranger's emulator by pid, or not at
-all.
+all.  The debug/probe scripts are silent and open their window behind the others (`WINDOW=none`
+runs without one); `run.sh` plays with sound in front.
 
 Toolchain lives at `~/.local`. `OPT=-O2`/`NATIVE_OPT=-O3` by default; override for debug
 backtraces with `make OPT='-O0' NATIVE_OPT='-O0'`.

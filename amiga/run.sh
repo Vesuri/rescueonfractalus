@@ -9,26 +9,26 @@
 # eye or ear without rebuilding between each look, e.g.
 #   ROF_EXE=RoF-asm ./run.sh          vs      ROF_EXE=RoF-cmixer ./run.sh
 #
-# Optional extra fs-uae args via $EXTRA_ARGS (same convention as diag_run.sh).  Raw WinUAE core
+# Optional extra fs-uae args via $EXTRA_ARGS (same convention as diag_run.sh; they win over
+# the script's own).  Raw WinUAE core
 # options take a `uae_` prefix and are passed straight to cfgfile_parse_option, which logs
-# `Set option <name> = "<value>"` — grep ~/.local/share/fs-uae/fs-uae.log to prove one took.
+# `Set option <name> = "<value>"` — grep .run/fsuae/Cache/Logs/fs-uae.log.txt to prove one took.
 # Audio knobs that matter here (fs-uae's A500 defaults hide artefacts):
 #   --uae_sound_interpol=none   default `anti`; `none` = the raw non-interpolated path
 #   --uae_sound_volcnt=true     default false; emulate Paula's volume-PWM raster
 #   --uae_sound_frequency=96000 default 44100
 set -euo pipefail
 cd "$(dirname "$0")"
-. "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
+. ./env.sh
+. "$FSUAE_COMMON"
 
-FSUAE="${FSUAE:-fs-uae}"
-ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
+ROM="${1:-$KICKSTART}"
 [ -f "$ROM" ] || { echo "Kickstart ROM not found: $ROM  (pass as \$1 or set \$KICKSTART)"; exit 1; }
 EXE="${ROF_EXE:-out/RoF}"
 # Emulated machine: A500+ by default (the target; ECS Denise for BPLCON3 border-blanking).
 # `AMIGA_MODEL=A1200 ./run.sh` checks the port on a faster CPU — beam-timing races that the
 # slow A500 happens to land safely show up there.
 MODEL="${AMIGA_MODEL:-A500+}"
-EXTRA_ARGS="${EXTRA_ARGS:-}"
 [ -f "$EXE" ] || { echo "not found: $EXE  (build first: make, or set \$ROF_EXE)"; exit 1; }
 
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"
@@ -59,16 +59,15 @@ SHOTS="${FSEMU_SCREENSHOTS_DIR:-$HOME/Pictures/Screenshots}"
 mkdir -p "$SHOTS"
 export FSEMU_SCREENSHOTS_DIR="$SHOTS"
 
-fsuae_stop_previous
-# After the exec this shell IS fs-uae, so record $$ as the emulator pid.
-fsuae_track_self
-exec "$FSUAE" \
-  --amiga_model="$MODEL" \
-  --chip_memory=1024 --fast_memory=8192 \
-  --kickstart_file="$ROM" \
+# DEBUG=1 also opens the gdb stub, on a port no other project holds.
+if [ "${DEBUG:-0}" = 1 ]; then fsuae_claim_port; else fsuae_stop_previous; fi
+# Model, memory, sound and window: fsuae_options in $FSUAE_COMMON (it also passes $EXTRA_ARGS;
+# fsuae_exec records this shell, which becomes fs-uae, as the emulator).
+KICKSTART="$ROM" AMIGA_MODEL="$MODEL" CHIP_KB=1024 FAST_KB=8192
+fsuae_options
+fsuae_exec \
   --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
   --joystick_port_0=none --joystick_port_1=none \
-  --automatic_input_grab=0 --fullscreen=0 --window_width=720 --window_height=568 \
-  --ntsc_mode=0 --state_dir="$RUN/state" \
-  --screenshots_output_dir="$SHOTS" \
-  $EXTRA_ARGS
+  --window_width=720 --window_height=568 \
+  --state_dir="$RUN/state" \
+  --screenshots_output_dir="$SHOTS"

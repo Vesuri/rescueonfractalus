@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--mode', choices=('quit', 'timed'), default='timed')
-    p.add_argument('--whdload', type=Path, default=Path.home()/'.local/share/amiga/WHDLoad/C/WHDLoad')
+    p.add_argument('--whdload', type=Path, default=os.environ.get('WHDLOAD_BINARY')
+                   or Path.home()/'.local/share/amiga/WHDLoad/C/WHDLoad')
     p.add_argument('--rom', type=Path, required=True)
     p.add_argument('--rtb', type=Path, required=True)
     p.add_argument('--logo-phase', choices=('initial', 'games'),
