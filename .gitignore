@@ -53,3 +53,9 @@ tools/__pycache__/
 /reference/
 *.a8s
 *.dat
+
+# --- Release archives --------------------------------------------------------
+# create_release.sh writes whdload/dist/ (ignored there); a published copy is
+# normally renamed with its version and lands at the repo root.  Regenerable
+# from the matching tag, so never committed.
+*.lha
