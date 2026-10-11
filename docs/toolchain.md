@@ -48,13 +48,14 @@ matching real loader semantics, incl. the `$3CDE` overlap). Entry = `$3CDE`.
 One-shot import + auto-analysis + listing export (re-creates the project):
 
 ```sh
+source amiga/env.sh   # AMIGA_GHIDRA_SCRIPTS: AmigaXDev's shared scripts
 GH="tools/ghidra/ghidra_12.1_PUBLIC"
 ABS="$(pwd)"
 "$GH/support/analyzeHeadless" tools/ghidra-proj RoF \
   -import disasm/rof_mem.bin \
   -processor "6502:LE:16:default" \
   -loader BinaryLoader \
-  -scriptPath ghidra_scripts \
+  -scriptPath "ghidra_scripts;$AMIGA_GHIDRA_SCRIPTS" \
   -preScript  MarkEntries.java \
   -postScript ExportListing.java "$ABS/disasm/listing.txt"
 ```
@@ -63,7 +64,7 @@ Re-run a script against the **already-imported** program (no re-analysis):
 
 ```sh
 "$GH/support/analyzeHeadless" tools/ghidra-proj RoF -process rof_mem.bin \
-  -scriptPath ghidra_scripts -noanalysis \
+  -scriptPath "ghidra_scripts;$AMIGA_GHIDRA_SCRIPTS" -noanalysis \
   -postScript ExportListing.java "$ABS/disasm/listing.txt"
 ```
 
@@ -79,14 +80,21 @@ Re-run a script against the **already-imported** program (no re-analysis):
 repo keeps of it. **Do not** open the project in the Ghidra GUI and headless at
 the same time (Ghidra locks projects).
 
-## Ghidra scripts (`ghidra_scripts/`)
+## Ghidra scripts
+
+This repo's `ghidra_scripts/`, tied to the Atari original:
 
 | Script | Purpose |
 |---|---|
 | `MarkEntries.java` | mark XEX entry points + every address in `entrypoints.csv` (DLIs are reachable only through indirect-jump tables, so Ghidra never finds them itself), then disassemble |
-| `ExportListing.java` | dump `listing.txt` (functions + instructions + comments) — the transpiler's input |
 | `ApplyNames.java` | apply `symbols.csv` names/comments to the project |
 | `DumpHwAccesses.java` | xref dump of `$D000–$D7FF` + page-2 shadow accesses → `docs/hw-access.md` |
+
+AmigaXDev's shared scripts (`$AMIGA_GHIDRA_SCRIPTS`):
+
+| Script | Purpose |
+|---|---|
+| `ExportListing.java` | dump `listing.txt` (functions + instructions + comments) — the transpiler's input |
 | `DumpCallGraph.java` | per-function caller/callee/indirect-jump summary → `disasm/callgraph.txt` |
 | `DumpZeroPage.java` | per-address zero-page read/write census → `disasm/zeropage.csv` |
 

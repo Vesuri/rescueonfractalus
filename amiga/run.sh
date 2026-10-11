@@ -60,7 +60,7 @@ mkdir -p "$SHOTS"
 export FSEMU_SCREENSHOTS_DIR="$SHOTS"
 
 # DEBUG=1 also opens the gdb stub, on a port no other project holds.
-if [ "${DEBUG:-0}" = 1 ]; then fsuae_claim_port; else fsuae_stop_previous; fi
+fsuae_prepare
 # Model, memory, sound and window: fsuae_options in $FSUAE_COMMON (it also passes $EXTRA_ARGS;
 # fsuae_exec records this shell, which becomes fs-uae, as the emulator).
 KICKSTART="$ROM" AMIGA_MODEL="$MODEL" CHIP_KB=1024 FAST_KB=8192
