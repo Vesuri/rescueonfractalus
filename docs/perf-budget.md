@@ -6,6 +6,9 @@
 > Companions: `docs/asm-migration-plan.md` (the asm twins), `docs/flight-perf-log.md` (the full
 > investigation archive), the `flight-pc-profiler` + `flight-measurement-rules` memories (ranked
 > TODO and per-change history).
+> The general measurement method (units, instruments, A/B discipline, pricing, the traps) is
+> maintained in AmigaXDev `docs/reference/measurement-method.md`; this page holds the flight
+> target, budget, records and closed candidates.
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
 (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, **24.88 FPS after the 2026-08-12 codegen-tax + edge-plot
@@ -204,8 +207,9 @@ one — the old one already knew which floor to subtract.
 ## Correctness + measurement
 
 Every rewrite must stay byte-identical — `make validate FN=<name>`
-diffs full `mem[]` state vs the transliterated `__t6502` oracle (exit `cpu` regs are usually dead
-→ "incidental cpu diffs" are fine; **0 mem mismatch is mandatory**). Measure on real hardware via
+diffs full `mem[]` state vs the transliterated `__t6502` oracle (**0 mem mismatch is mandatory**).
+The harness reports exit-`cpu` differences as "incidental"; one is a defect whenever a transpiled
+caller reads that register (the `audio_timer_setup` exit-A=0 bug, `docs/postmortem.md`). Measure on real hardware via
 the headless beam probe (`make PROBES=1` + `diag_run.sh`); `FP_TIME` subtracts the flight-VBI ISR
 beam-lines (`g_isrBeamLines`) so a phase bucket excludes ISR firings in its window. ⚠ Per-phase
 flight numbers are **terrain-dependent and noisy run-to-run** (±30%) — trust large deltas, not

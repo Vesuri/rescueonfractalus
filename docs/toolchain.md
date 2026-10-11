@@ -13,22 +13,13 @@ macOS (Apple Silicon).
 | clang / make | system | building the SDL host port (`make` at the repo root) |
 | SDL2 | homebrew | the macOS dev/profiling backend |
 | `m68k-amiga-elf-*` + `vasmm68k_mot` + `elf2hunk` + patched FS-UAE | `~/.local`, installed by AmigaXDev (`make setup`; on `PATH` via `. amiga/env.sh`, which sources its shared `env.sh`) | the Amiga cross-build, from BartmanAbyss `vscode-amiga-debug` — its gcc/gdb/elf2hunk/FS-UAE are mutually matched, which is what makes source-level debugging work |
-| `atari800` | homebrew | the Atari ground-truth emulator (FIFO monitor mode) |
+| `atari800` | Homebrew, installed by AmigaXDev (`make brew-extras`) | the Atari ground-truth emulator (FIFO monitor mode) |
 
-⚠ **The Amiga toolchain must live at a space-free path** (hence `~/.local`, not
-this repo). GCC's LTO link bakes the install path into `COLLECT_LTO_WRAPPER` and
-`posix_spawnp`s it, and a space — as in `…/Rescue on Fractalus/…` — breaks the
-spawn. `amiga/env.sh` resolves symlinks with `pwd -P` so gcc only ever sees
-space-free paths.
-
-> **2026-08-12:** `tools/ghidra` is now a symlink to a shared install at
-> `~/.local/share/ghidra`, shared with other binary-only-port work rather than its own copy — saves
-> ~900 MB of duplication between binary-only-port repos. No trailing slash on the
-> `tools/ghidra` gitignore entry, since a trailing-slash pattern doesn't match a symlink
-> to a directory. The extracted copy that had been here was found to be missing
-> `support/` (pruned to ~180 MB at some point, breaking headless use); it was
-> re-extracted from a fresh copy of the same `ghidra_12.1_PUBLIC_20260513.zip` release
-> before being moved to the shared location.
+The Amiga toolchain's rules (space-free install path, flags, link audits) and the headless
+Ghidra rules are maintained in AmigaXDev `docs/reference/port-toolchain.md`; paths and variables in
+AmigaXDev `docs/environment.md`. `amiga/env.sh` resolves symlinks with `pwd -P`, so gcc only sees
+space-free paths. `tools/ghidra` is a symlink to the shared install under
+`~/.local/share/ghidra` (git-ignored without a trailing slash).
 
 > `brew install` on this machine triggers the Privileges.app elevation prompt,
 > so kick off installs yourself or approve the prompt when one appears.

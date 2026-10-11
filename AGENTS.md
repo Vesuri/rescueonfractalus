@@ -24,6 +24,25 @@ The boot→flight sequence has 7 canonical scenes (user-approved). Code ids are 
 The Amiga app's main class is `RescueOnFractalus` (flight is a continuation of it, not a
 separate scene). Atari entry is `game_entry $3CDE`; main blob `$3CDE–$B7FF`.
 
+## Shared environment and knowledge
+
+The Amiga toolchain, FS-UAE, Kickstarts, WHDLoad and atari800 come from AmigaXDev (`make setup`
+and `make brew-extras` there); `amiga/env.sh` sources `~/.local/share/amiga/env.sh`. Generic
+lessons live in AmigaXDev and are edited there; this repo's docs keep what is specific to Rescue
+on Fractalus.
+
+| AmigaXDev doc | Read it when |
+|---|---|
+| `docs/environment.md` | looking for a shared tool, Kickstart or variable |
+| `docs/playbooks/new-port-playbook.md` | the port's phases, transpiler rules, release checklist |
+| `docs/reference/m68k-optimisation.md` | optimising for the 68000 (with this repo's `docs/m68k-optimisation.md`) |
+| `docs/reference/measurement-method.md` | measuring or judging any number (with `docs/perf-budget.md`) |
+| `docs/reference/validation-harness.md` | oracles, fixtures, sabotage, the faithfulness seam |
+| `docs/reference/amiga-hardware.md` | takeover, interrupts, copper, blitter, Paula, the framework |
+| `docs/reference/headless-fsuae.md` | the launcher, gdb stub and diag runs (with `docs/headless-fsuae.md`) |
+| `docs/reference/port-toolchain.md` | flags, linking, audits, Ghidra, WHDLoad slave and release |
+| `docs/native-port-validation.md` | crash dumps, installer updates, release archive checks |
+
 ## Reference docs — READ ON DEMAND (this file stays small on purpose)
 
 Hard-won detail lives in `docs/`, not here. **Read the relevant one BEFORE working in its area**;
@@ -35,8 +54,8 @@ these are the derived facts we must not re-derive or contradict.
 | `docs/instruments.md` | Touching the cockpit HUD, a named instrument, enemies or terrain objects |
 | `docs/controls.md` | Touching input, the keyboard/console path, Standby SELECT, or BREAK/restart |
 | `docs/perf-budget.md` | Quoting, sizing or judging ANY performance number; measuring an asm twin |
-| `docs/m68k-optimisation.md` | Optimising a hot function or writing an asm twin (68000 rules) |
-| `docs/headless-fsuae.md` | Writing a probe, driving FS-UAE headlessly, or suspecting a stale build |
+| `docs/m68k-optimisation.md` | Optimising a hot function or writing an asm twin: this tree's helpers, audits, measured examples, don't-retry notes |
+| `docs/headless-fsuae.md` | Writing a probe, driving FS-UAE headlessly, or suspecting a stale build (this harness's specifics) |
 | `docs/transpiler.md` | Working on `tools/transpile.py`, or when generated-code shape surprises you |
 | `docs/asm-migration-plan.md` | Any asm twin work — the per-phase design record |
 | `docs/flight-perf-log.md` | The perf investigation archive: what was tried, what it measured, what closed |
@@ -216,15 +235,17 @@ the measurement traps — is in **`docs/perf-budget.md`**. The ranked TODO is in
 ## Hard rules (violating these costs a day)
 
 - **Faithfulness first.** Byte-identical twins: `make validate FN=<name>` must show **0 mem
-  mismatch** (incidental exit-`cpu` diffs are fine). Validate against the 6502 + `atari800`.
+  mismatch**; an "incidental" exit-`cpu` diff is a defect when a transpiled caller reads that
+  register (`docs/postmortem.md`). Validate against the 6502 + `atari800`.
 - **RAM is uniformly slow — there is no "fast RAM" on the target A500.** Optimise by reducing the
-  NUMBER of reads/writes, never by moving data to a "cheaper" buffer. (`docs/m68k-optimisation.md`)
+  NUMBER of reads/writes, never by moving data to a "cheaper" buffer. (AmigaXDev
+  `docs/reference/m68k-optimisation.md`; this tree's helpers: `docs/m68k-optimisation.md`)
 - **NEVER emit a 32-bit software mul/div** (`__mulsi3`/`__divsi3`/`__udivsi3`/`__modsi3`/
   `__umodsi3`) — the 68000 has none. Use `src/cpu/m68k_math.h`'s 16-bit helpers, and audit with
   `m68k-amiga-elf-objdump -d out/RoF.elf | grep -E '__(u?div|u?mod|mul)si3'` (must be empty).
 - **Copper bitplane POINTER swaps happen in the VBI ISR, never mid-frame** — a torn pointer
-  garbages the whole viewport for a frame. Colour-only pokes mid-frame are tolerable. See the
-  `amiga-copper-lessons` memory.
+  garbages the whole viewport for a frame. Colour-only pokes mid-frame are tolerable. (AmigaXDev
+  `docs/reference/amiga-hardware.md` §Copper)
 - **A DLI that leaves a register untouched ⇒ the CopperList must too.** Emit only the MOVEs the
   DLI actually makes. (`docs/scene-composition.md`)
 
