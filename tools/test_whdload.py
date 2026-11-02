@@ -31,6 +31,17 @@ def main():
     p.add_argument('--seconds', type=int, default=90, help='host safety ceiling')
     p.add_argument('--ticks', type=int, help='WHDLoad timeout in PAL fields (timed: 1500; quit: disabled)')
     p.add_argument('--cpu', default='68020')
+    p.add_argument('--mmu', action='store_true',
+                   help='enable the CPU MMU (68030/68040) and require WHDLoad translation')
+    p.add_argument('--emulator',
+                   default=os.environ.get('FSUAE') or os.environ.get('FSUAE_ARM') or 'fs-uae',
+                   help='FS-UAE binary; amiga/env.sh sets $FSUAE to the native build, which '
+                        'carries the cached-MMU write-attribute correction the x86_64 one lacks')
+    p.add_argument('--slave', type=Path, default=ROOT/'whdload/RoF.slave')
+    p.add_argument('--expect-cacr',
+                   help='require this CACR (hex) in the register report: the slave asks for '
+                        'CACHE and _bootdos falls back to CACHECHIP where WHDLoad has no MMU, '
+                        'so the value is the proof that the right branch ran')
     p.add_argument('--workbench', type=Path, required=True)
     p.add_argument('--cartridge', type=Path, default=ROOT/'rof.rom')
     p.add_argument('--no-preload', action='store_true')
@@ -48,22 +59,24 @@ def main():
     for d in (boot/'s', boot/'devs/Kickstarts', game/'data', base/'state'):
         d.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(args.whdload, game/'WHDLoad')
-    shutil.copyfile(ROOT/'whdload/RoF.slave', game/'RoF.slave')
+    shutil.copyfile(args.slave, game/'RoF.slave')
     shutil.copyfile(args.rom, boot/'devs/Kickstarts/kick34005.A500')
     shutil.copyfile(args.rtb, boot/'devs/Kickstarts/kick34005.A500.RTB')
     shutil.copyfile(args.exe, game/'data/RoF')
     shutil.copyfile(args.cartridge, game/'data/rof.rom')
     (boot/'s/WHDLoad.prefs').write_text('Expert\nReadDelay=0\n')
     preload = '' if args.no_preload else 'PRELOAD '
+    mmu = 'MMU ' if args.mmu else ''
     custom = f'CUSTOM2={args.custom2} CUSTOM3={args.custom3} CUSTOM4={args.custom4} '
     (boot/'s/startup-sequence').write_text(
         'DF0:C/Assign C: DF0:C\nDF0:C/Assign LIBS: DF0:Libs\n'
         'DF0:C/Assign DEVS: DH0:devs\nStack 16384\nFailAt 999\n'
-        f'CD DH1:\nWHDLoad RoF.slave {preload}{custom}SPLASHDELAY=0 NOREQ COREDUMP FILELOG TIMEOUT={args.ticks} >DH0:result\n'
+        f'CD DH1:\nWHDLoad RoF.slave {preload}{mmu}{custom}SPLASHDELAY=0 NOREQ COREDUMP FILELOG TIMEOUT={args.ticks} >DH0:result\n'
         'If WARN\nEcho failed >DH0:failed\nElse\nEcho passed >DH0:passed\nEndIf\n')
     with (base/'emulator.log').open('w') as log:
-        emu = subprocess.Popen(['fs-uae', '--amiga_model=A1200', '--cpu='+args.cpu,
+        emu = subprocess.Popen([args.emulator, '--amiga_model=A1200', '--cpu='+args.cpu,
             '--uae_cpu_model='+args.cpu, '--uae_cpu_24bit_addressing=false',
+            *(['--uae_mmu_model='+args.cpu] if args.mmu else []),
             '--jit_compiler=0', '--chip_memory=2048', '--fast_memory=8192',
             '--kickstart_file='+os.environ['KICKSTART'],
             '--hard_drive_0='+str(boot), '--hard_drive_0_priority=10', '--hard_drive_1='+str(game),
@@ -79,6 +92,22 @@ def main():
             output = (boot/'result').read_text(errors='replace') if (boot/'result').exists() else ''
             report = (game/'.whdl_register').read_text(encoding='latin1') if (game/'.whdl_register').exists() else ''
             assert report, f'No WHDLoad core dump: {base}\n{output}'
+            if args.expect_cacr:
+                cacr = re.search(r'CACR=([0-9A-Fa-f]+)', report)
+                assert cacr, 'No CACR in the WHDLoad register report: ' + report
+                assert int(cacr[1], 16) == int(args.expect_cacr, 16), (
+                    f'Cache policy: CACR={cacr[1]}, expected {args.expect_cacr}')
+                print('PASS: cache policy, CACR=' + cacr[1])
+            if args.mmu:
+                translation = re.search(r'TC=([0-9A-Fa-f]+)', report)
+                assert translation, 'No TC in the WHDLoad register report: ' + report
+                # The enable bit is the top bit of the register WHDLoad printed: bit 31 of the
+                # 68030's 32-bit TC, bit 15 of the 68040/68060's 16-bit one.
+                enable = 0x80000000 if len(translation[1]) > 4 else 0x8000
+                assert int(translation[1], 16) & enable, (
+                    'MMU translation was not enabled, so protection was not tested: TC='
+                    + translation[1])
+                print('PASS: MMU translation enabled, TC=' + translation[1])
             if args.mode == 'timed':
                 assert 'DEBUG caused.' in report, report + output
                 files = (game/'.whdl_log').read_text(encoding='latin1')

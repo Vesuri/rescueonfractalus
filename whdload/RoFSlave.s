@@ -99,7 +99,8 @@ WPDRIVES	= %0000		;all emulated drives write protected
 
 BLACKSCREEN			;1.3's boot colours all black -- no CLI flash before the game
 BOOTDOS				;_bootdos below runs as a real CLI process
-CACHECHIP			;instruction cache on (chip write-through) for accelerated machines
+CACHE				;full caches where WHDLoad uses the MMU; _bootdos falls back to
+				;CACHECHIP's mask where it does not (docs/whdload-slave.md 2b)
 HDINIT				;mount slv_CurrentDir as DH0: -- BOOTDOS requires it
 SEGTRACKER			;so a WHDLoad crash report names our hunk + offset
 STACKSIZE	= 4096		;V33's initial CLI default is 4000 bytes
@@ -162,7 +163,33 @@ _args		dc.b	10		;empty argument line -- must be LF terminated
 _args_end
 	EVEN
 
+	;Supervisor() callback for _bootdos: D0 = CACR.  CACR is 68020+, so _bootdos
+	;calls this only behind its AttnFlags test.
+	machine	mc68020
+_getcacr	movec	cacr,d0
+		rte
+	machine	mc68000
+
 _bootdos	move.l	(_resload,pc),a2	;A2 = resload
+
+	;CACHE marks BaseMem non-cacheable, and WHDLoad can only set cacheability per
+	;region through the MMU -- which it uses on a 68040/68060 but, by default, NOT on
+	;a 68030.  Without it one non-cacheable region turns every cache off, so read the
+	;CACR back and, if even the instruction cache is off, ask for CACHECHIP's mask
+	;instead: BaseMem write-through, instruction cache only, no MMU needed.
+	;CACR exists from the 68020 on and this port's target is a plain 68000 A500, so
+	;the AttnFlags test guards a privileged-instruction trap, not just a wasted call.
+		move.l	(4),a6
+		btst	#AFB_68020,(AttnFlags+1,a6)
+		beq	.caches_done
+		lea	(_getcacr,pc),a5
+		jsr	(_LVOSupervisor,a6)
+		and.w	#$8001,d0		;IC (68040/68060) or EI (68020/68030)
+		bne	.caches_done
+		move.l	#WCPUF_Base_WT|WCPUF_Exp_CB|WCPUF_Slave_CB|WCPUF_IC|WCPUF_BC|WCPUF_SS|WCPUF_SB,d0
+		move.l	#WCPUF_All,d1
+		jsr	(resload_SetCPU,a2)
+.caches_done
 
 	;read the version-17 Custom1..4 options before loading/patching the game
 		lea	(_rof_tags,pc),a0

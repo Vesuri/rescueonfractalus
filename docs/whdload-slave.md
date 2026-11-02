@@ -238,6 +238,64 @@ host, because a real 1.3 ROM is what the kickemu boots anyway:
   lives inside WHDLoad's ExpMem rather than in real memory. So treat it as a bound on the
   `?` rows, not as a replacement for `MEMFREE`.
 
+## 2b. The cache setup — `CACHE`, with a `CACHECHIP` fallback
+
+The slave asks for one of WHDLoad's cache options; `kick13.s` turns it into a
+`resload_SetCPU` mask, which the crash report echoes as its `setcpu=` line:
+
+| Option | Mask | BaseMem (chip) | ExpMem | Caches requested |
+|---|---|---|---|---|
+| `CACHE` | `3B3D` | non-cacheable | copyback | instruction **+ data** |
+| `CACHECHIP` | `393E` | write-through | copyback | instruction only |
+| `CACHECHIPDATA` | `3B3E` | write-through | copyback | instruction + data |
+
+Neither static option is right everywhere, and the reason is not DMA safety — the game's
+bitplanes are in BaseMem, which `CACHE` and `CACHECHIP` both keep coherent (non-cacheable, or
+write-through). It is that **WHDLoad can only set cacheability per region through the MMU**.
+Without one it has the CACR alone, and a single non-cacheable region then forces *every* cache
+off. So `CACHE` buys the data cache only where an MMU is actually in use — and WHDLoad uses it
+on a 68040/68060 by default but, on a 68030, **only when the user passes `MMU`** (`Docs/en/mmu.html`);
+a 68020 and every EC/LC part have none at all. `CACHECHIP` keeps BaseMem cacheable
+(write-through) so the instruction cache always survives, but never reaches the data cache,
+which is where this port's working set lives: the executable and its tables load into ExpMem
+(copyback under both options) and only the bitplanes are in BaseMem.
+
+**So the slave asks for `CACHE` and repairs it at runtime.** `_bootdos` reads the CACR back and,
+if even the instruction cache came back off — which is exactly the "no MMU, so everything off"
+case — calls `resload_SetCPU` with `CACHECHIP`'s mask. Every CPU then gets the best setup it can
+have, and `setcpu=` in a crash report still states which one it ended up with. The approach is
+Secret Weapons of the Luftwaffe's (`../Secret Weapons of Luftwaffe/docs/whdload.md`), where a
+68060 was sluggish under WHDLoad and smooth natively for this reason.
+
+⚠ **`movec cacr,d0` is a 68020 instruction and this port's target is a plain 68000 A500**, so the
+`AFB_68020` test on ExecBase `AttnFlags` guards a privileged-instruction trap, not merely a
+wasted call — it is load-bearing in a way it is not in SWOTL, which requires an 020. A plain
+68000 has no caches, so leaving the `CACHE` request standing there costs nothing. The helper is
+bracketed by `machine mc68020`/`machine mc68000` so the rest of the slave still assembles
+`-m68000`.
+
+Measured with `tools/test_whdload.py --expect-cacr` (2026-10-29), each a `FORCE_QUIT=1500`
+game that plays and returns normally, plus a PRELOAD data-validation run:
+
+| CPU | MMU | Final `setcpu=` | CACR | Caches live |
+|---|---|---|---|---|
+| 68000 | n/a | `3B3D` (CACHE, inert) | — | none; the CPU has none |
+| 68020 | n/a | `393E` **fallback** | `1` | instruction |
+| 68030 | no (**the default**) | `393E` **fallback** | `2011` | instruction + burst |
+| 68030 | `MMU` tooltype | `3B3D` | `2111` | instruction + **data** |
+| 68040 | either (on by default) | `3B3D` | `80008000` | instruction + **data** |
+
+Sabotage, so the assertion is known not to be vacuous: the previous static `CACHECHIP` slave
+fails the 68040 row (`CACR=8000`, no data cache) and a plain `CACHE` slave fails the 68020 row
+(`CACR=0`, no caches at all).
+
+⚠ Two cautions for further work here. WHDLoad documents that **real Amiga hardware refuses to
+data-cache chip memory regardless of the MMU setup**, and that a *copyback* chip page on a
+68040/68060 makes writes ~5x slower than a plain uncached one (`Docs/en/cache.html`) — which is
+what both masks avoid, one by write-through and one by non-cacheable. And the cached-040 MMU
+path needs the patched FS-UAE (see §3); the x86_64 build on `PATH` can report stale DMA pixels
+there.
+
 ## 3. Building it
 
 The complete release can be built on the host:
@@ -294,7 +352,18 @@ and the outer Kickstart 3.1 path (`KICKSTART` can override it):
 python3 tools/test_whdload.py --rom /local/kick34005.A500 \
   --rtb /local/kick34005.A500.RTB --workbench /local/Workbench.adf
 # Add --no-preload to exercise live reads.
+# --cpu 68030|68040 --mmu runs an accelerated machine with WHDLoad's memory protection;
+# --slave <file> tests a variant slave without overwriting whdload/RoF.slave;
+# --expect-cacr <hex> asserts the resulting cache setup (the table in 2b).
 ```
+
+`--mmu` passes WHDLoad's `MMU` tooltype as well as `--uae_mmu_model`, because **WHDLoad
+disables the MMU by default on a 68030** and the run would otherwise silently test the
+unprotected path. The harness then requires live translation, reading `TC` out of the register
+report: the enable bit is bit 31 of the 030's 32-bit `TC`, bit 15 of the 040's 16-bit one — do
+not assert the 040's `8000` on an 030. The emulator comes from `$FSUAE` (`amiga/env.sh` points
+it at AmigaXDev's native build); the x86_64 `fs-uae` on `PATH` lacks the cached-MMU
+write-attribute correction, so a cached 68040 can read stale DMA pixels there.
 
 The timed test uses a 68020 so WHDLoad can catch its timeout through a relocated
 VBR. It requires three cartridge-range reads, the ready marker in the loaded data
@@ -303,11 +372,19 @@ requires a clean `make -C amiga FORCE_QUIT=1500` build and verifies normal retur
 clean-build the release afterwards. These tests need local ROMs but building and
 packaging do not.
 
-Verified on 2026-09-24 with vasm 1.9 and WHDLoad 19.2.6941: release,
-enhanced and tuning slaves assemble; production runs with and without PRELOAD
-reach RoF with validated cartridge data; a `FORCE_QUIT=1500` game returns OK on
-an emulated 68000. The default release archive passes the external-data audit
-(the optional enhanced cockpit atlas may be absent, or must be BSS if present).
+Verified on 2026-10-29 with vasm 1.9, gcc 15.1.0 and WHDLoad 20.1.7190: release,
+enhanced and tuning slaves assemble; a PRELOAD run reaches RoF with validated cartridge
+data on an emulated 68020, 68030 and 68040 (the last two also with `--mmu`); a
+`FORCE_QUIT=1500` game returns OK on all of 68000, 68030 and 68040, with and without the
+MMU. The default release archive passes the external-data audit (the optional enhanced
+cockpit atlas may be absent, or must be BSS if present).
+
+⚠ `--no-preload` currently fails its three-read assertion under WHDLoad 20.1: the game
+still loads and marks its data ready (`RoF!DATA`/`RDF!` in the expansion dump) and still
+reaches RoF, but no `rof.rom` read appears in `FILELOG` at all, so `len(reads) == 3` is
+unmet. Reproduced on both FS-UAE builds, so it is not an emulator artefact; it was last
+seen passing under 19.2.6941 (2026-09-24). The assertion is left failing deliberately —
+do not relax it before establishing where the live reads went.
 
 ## 4. What was changed in the Install Template, and why
 
