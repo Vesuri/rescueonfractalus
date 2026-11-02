@@ -15,7 +15,7 @@
 (set #prefix "RoF")			;name of slave, directory
 (set #prefix-slave "")
 (set #exe-version 1)			;the game executable this install accepts: its $VER:
-(set #exe-revision 2)			;must read exactly #exe-version.#exe-revision
+(set #exe-revision 3)			;must read exactly #exe-version.#exe-revision
 (set #exe-url "https://github.com/Vesuri/rescueonfractalus/releases")
 ;@app-name (the icon's APPNAME tooltype) is the TITLE, "Rescue on Fractalus!", and it is
 ;what every prompt says.  #prefix is deliberately NOT @app-name here: it is a FILE name
