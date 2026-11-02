@@ -14,6 +14,9 @@
 (set #extra3-file "Extra3")		;name of third extra file
 (set #prefix "RoF")			;name of slave, directory
 (set #prefix-slave "")
+(set #exe-version 1)			;the game executable this install accepts: its $VER:
+(set #exe-revision 2)			;must read exactly #exe-version.#exe-revision
+(set #exe-url "https://github.com/Vesuri/rescueonfractalus/releases")
 ;@app-name (the icon's APPNAME tooltype) is the TITLE, "Rescue on Fractalus!", and it is
 ;what every prompt says.  #prefix is deliberately NOT @app-name here: it is a FILE name
 ;— the installed drawer, "RoF.slave" and the icon "RoF.inf" — and it has to stay "RoF",
@@ -204,9 +207,51 @@
       ;The executable contains no original game data.  Copy it, then ask for the user's
       ;complete 64 KB XEGS cartridge image.  The executable validates its size and reads only
       ;the three ranges required by the port into its BSS data region at startup.
+      ;
+      ;The full release carries "RoF" beside this script; the archive on whdload.de does
+      ;not, so ask for it when it is absent.  Either way accept only the version this
+      ;install was written for, read from its $VER: string by getversion (0 when it has
+      ;none).  Not C:Version: the 2.04 one cannot parse a version after a name with
+      ;spaces ("Rescue on Fractalus! 1.3") and reports WARN for every comparison.
+      (set #EXE_file "")
+      (if (exists "RoF") (set #EXE_file "RoF"))
+      (set #EXE_prompt
+        (cat
+          ("Select the Rescue on Fractalus! %ld.%ld executable \"RoF\".\n\n" #exe-version #exe-revision)
+          "It is not included in this install archive. Download it from the "
+          "matching release at\n" #exe-url
+        )
+      )
+      (set #EXE_valid 0)
+      (while (= #EXE_valid 0)
+        (if (= #EXE_file "")
+          (
+            (set #SF_prompt #EXE_prompt)
+            (set #SF_default_filename "RoF")
+            (P_SelectFile)
+            (if (= #SF_filename "")
+              (abort "Installation cancelled: the Rescue on Fractalus! executable is required.")
+            )
+            (set #EXE_file #SF_filename)
+          )
+        )
+        (if (= (getversion #EXE_file) (+ (* #exe-version 65536) #exe-revision))
+          (set #EXE_valid 1)
+          (
+            (set #EXE_prompt
+              (cat
+                ("\"%s\" is not the Rescue on Fractalus! %ld.%ld executable.\n\n" #EXE_file #exe-version #exe-revision)
+                "Please select the \"RoF\" executable from the matching release at\n" #exe-url
+              )
+            )
+            (set #EXE_file "")
+          )
+        )
+      )
       (copyfiles
         (help @copyfiles-help)
-	(source "RoF")
+        (source #EXE_file)
+        (newname "RoF")
         (dest #dest)
       )
 

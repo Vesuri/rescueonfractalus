@@ -234,7 +234,34 @@ clean:
 	rm -f $(FLAGS_FILE)
 	rm -rf $(HOSTPROOF_DIR)
 
-# Complete host-built WHDLoad distribution.
-.PHONY: dist
-dist:
-	$(MAKE) -C whdload dist
+# --- Release (docs/whdload-slave.md §3) ---------------------------------------------------
+# `make release` clean-builds the Amiga game and the slave from committed sources, audits the
+# executable for game data, writes dist/RoF-$(VERSION).lha (full) and
+# dist/RoF-$(VERSION)-whdload.lha (whdload.de: no RoF, no Manual), then checks both with Lhasa.
+# `make github-release` publishes the tagged release with the full archive and the executable.
+VERSION := $(shell cat VERSION)
+RELEASE_ARCHIVE := dist/RoF-$(VERSION).lha
+
+.PHONY: dist release release-check github-release
+dist: release
+release:
+	@[ -n "$(ALLOW_DIRTY)" ] || { git diff --quiet HEAD && \
+		test -z "$$(git status --porcelain --untracked-files=no)"; } || \
+		{ echo "release needs a clean tree: commit first (ALLOW_DIRTY=1 for a local try)"; exit 1; }
+	bash -c '. amiga/env.sh && $(MAKE) -C amiga clean && $(MAKE) -C amiga'
+	$(MAKE) -C whdload RoF.slave VASMFLAGS=
+	python3 tools/audit_release_data.py amiga/out/RoF.elf amiga/out/RoF --repo .
+	python3 tools/package_release.py amiga/out/RoF whdload/RoF.slave dist
+	python3 tools/check_release.py dist
+
+release-check:
+	python3 tools/check_release.py dist
+
+github-release: release-check
+	@git rev-parse -q --verify "refs/tags/$(VERSION)" >/dev/null || \
+		{ echo "tag the release commit first: git tag $(VERSION) && git push origin $(VERSION)"; exit 1; }
+	@[ "$$(git rev-parse "$(VERSION)^{commit}")" = "$$(git rev-parse HEAD)" ] || \
+		{ echo "HEAD is not the commit tagged $(VERSION)"; exit 1; }
+	python3 tools/check_release.py --notes > build/release-notes.md
+	gh release create $(VERSION) $(RELEASE_ARCHIVE) amiga/out/RoF \
+		--title $(VERSION) --notes-file build/release-notes.md

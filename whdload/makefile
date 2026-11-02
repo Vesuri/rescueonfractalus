@@ -22,11 +22,9 @@ tune: RoFTune.slave
 RoFTune.slave: RoFSlave.s rof_data_layout.i FORCE
 	$(VASM) -m68000 -pic -x -devpac -Fhunkexe -nosym $(VASMFLAGS) -DTUNE=1 -I"$(WHDLOAD)/Include" -I"$(NDK)" -o $@ $<
 
-release: dist
-
-dist:
-	bash -c '. ../amiga/env.sh && $(MAKE) -C ../amiga clean && $(MAKE) -C ../amiga'
-	./create_release.sh
+# The release archives are built from the repo root into dist/.
+release dist:
+	$(MAKE) -C .. release
 
 clean:
 	rm -f RoF.slave RoFTune.slave

@@ -20,7 +20,10 @@ scratch.  Grouped by what it is FOR; the file's own docstring/header has the usa
 | `make_xex_sparse.py` | Builds the sparse boot image `amiga/assets/rof_sparse.bin` that `incbin.s` embeds. |
 | `xex_dead_diff.py` | A/B proof for a dead-set change: diffs two frame-locked `mem[]` dumps with the candidate set masked out. |
 | `check_chip_bss.py` | Link-time guard: fails the Amiga build if a `__chip` variable carries a static initialiser (it would be silently discarded — `docs/asset-extraction.md` §6.1). |
-| `make_whdload_manual.py` | Renders the WHDLoad install's manual; run by `whdload/create_release.sh`. |
+| `make_whdload_manual.py` | Renders the WHDLoad install's manual; checked in, not rendered by the release. |
+| `package_release.py` | Writes `dist/RoF-<version>.lha` and `dist/RoF-<version>-whdload.lha`; run by `make release`. |
+| `check_release.py` | Independently checks both archives with Lhasa; `--notes` prints the GitHub release notes. |
+| `test_release_installer.py` | Runs the Install script under the real Installer 43 in FS-UAE. |
 
 ## External game-data tools
 

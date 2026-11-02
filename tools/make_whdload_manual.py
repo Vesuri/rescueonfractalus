@@ -11,7 +11,7 @@ Run from the repo root after editing docs/manual.md:
 
     python3 tools/make_whdload_manual.py
 
-The result is checked in (whdload/RoF Install/Manual) -- create_release.sh only
+The result is checked in (whdload/RoF Install/Manual) -- `make release` only
 copies the package, it does not run this.
 """
 

@@ -43,6 +43,14 @@
  from it. If validation fails, check that the selected file is the 64 KB XEGS
  cartridge ROM rather than another version of the game.
 
+ The game executable "RoF" is not part of the install archive on the WHDLoad
+ WWW-Page. Download it from the matching release at
+
+ https://github.com/Vesuri/rescueonfractalus/releases
+
+ and the installer will ask for it. The full release archive there already
+ includes it.
+
 
  Quitting:
  ---------

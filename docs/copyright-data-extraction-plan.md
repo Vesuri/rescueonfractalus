@@ -74,7 +74,7 @@ tables, so moving a byte array to another source file cannot accidentally satisf
 6. Extend `RoFSlave.s` to locate the descriptor, validate `rof.rom`, and fill the BSS region
    with `resload_LoadFileOffset` before calling the executable.
 7. Change the WHDLoad installer to ask for and copy the complete 64 KB `rof.rom`.  Keep the ROM
-   out of `create_release.sh` and make release creation reject a standalone/data-bearing
+   out of the release archives and make release creation reject a standalone/data-bearing
    executable.
 8. Update the README, tool documentation, build documentation, and WHDLoad manual/readme.
 
@@ -103,7 +103,7 @@ creating an ignored standalone package; `tools/verify_rom_recipe.py` proves all 
 hashes plus the runtime cockpit atlas and both Logo phases. The default Amiga ELF places
 `rof_game_data` and `rof_cockpit_planar` in `.bss`, while `make standalone ROM=...` places only
 the package in `.rodata`. `tools/audit_release_data.py` rejects that standalone form and is a
-mandatory gate in `whdload/create_release.sh`.
+mandatory gate in `make release`.
 
 The WHDLoad installer copies the complete ROM. The slave checks its 64 KB size, loads the three
 ranges, verifies the package CRC32, and then marks the descriptor ready. The old sparse boot

@@ -55,7 +55,7 @@ tools/__pycache__/
 *.dat
 
 # --- Release archives --------------------------------------------------------
-# create_release.sh writes whdload/dist/ (ignored there); a published copy is
-# normally renamed with its version and lands at the repo root.  Regenerable
-# from the matching tag, so never committed.
+# `make release` writes dist/RoF-<version>.lha and dist/RoF-<version>-whdload.lha.
+# Regenerable from the matching tag, so never committed.
+/dist/
 *.lha

@@ -8,11 +8,14 @@ Files:
 | Path | What |
 |---|---|
 | `whdload/RoFSlave.s` | the slave source — cross-assembled on the host with `vasm` |
-| `whdload/makefile` | host build (`vasm`), including `dist` (`release` alias), `enhanced` and `tune` targets |
+| `whdload/makefile` | host build (`vasm`), including `enhanced` and `tune` targets; its `release`/`dist` defer to the root `make release` |
 | `whdload/Makefile.amiga` | optional original Amiga-side build (`basm`, use `smake -f Makefile.amiga`) |
 | `whdload/RoF Install/` | the install package, derived from WHDLoad's Install Template |
 | `whdload/RoF Install/Manual` | the Lucasfilm manual as plain text — **generated**, `python3 tools/make_whdload_manual.py` from `docs/manual.md`; checked in, and `Manual.info` (a copy of the template's MultiView icon) gives it a Workbench icon |
-| `whdload/create_release.sh` | host-side: rebuilds the default slave and collects exe + slave + package into `whdload/dist/RescueOnFractalus.lha` |
+| `VERSION` | the release number: archive names and the git tag. `tools/check_release.py` requires it in the executable, slave, ReadMe and Install script |
+| `tools/package_release.py` | writes `dist/RoF-<version>.lha` (full) and `dist/RoF-<version>-whdload.lha` (whdload.de) with the shared `amigaxdev.release` |
+| `tools/check_release.py` | independent check of both archives with Lhasa; `--notes` prints the GitHub release notes |
+| `tools/test_release_installer.py` | runs the Install script under the real Installer 43 in FS-UAE |
 
 ## 0. Why this is a kickemu slave and not a 20-line loader
 
@@ -298,21 +301,51 @@ there.
 
 ## 3. Building it
 
-The complete release can be built on the host:
+The complete release is built from the repository root, from committed sources:
 
 ```sh
-make dist                          # from repository root
+make release                       # make dist is an alias; ALLOW_DIRTY=1 for a local try
 ```
 
 This clean-builds the external-data game (avoiding stale standalone/probe objects),
-assembles the release slave, audits the game for embedded cartridge data, and packages
-`whdload/dist/RescueOnFractalus.lha`. The native LHa compressor writes LH5 with level-1 headers, matching the
-published archive's ten member paths. `make -C whdload dist` and the earlier
-`make -C whdload release` are equivalent. No cartridge or Kickstart ROM is packaged.
+assembles the release slave, audits the game for embedded cartridge data, and writes two
+archives to `dist/`, then checks both with `tools/check_release.py`:
+
+| Archive | For | Contents of `RoF Install/` |
+|---|---|---|
+| `RoF-<version>.lha` | the GitHub release | Install, ReadMe, Manual (+ icons), RoF.inf, RoF.slave, **RoF** |
+| `RoF-<version>-whdload.lha` | upload to whdload.de | the same **without RoF and the Manual** |
+
+Both come from `tools/package_release.py` through AmigaXDev's `amigaxdev.release` (LH5,
+level-0 headers, members in name order, every member dated with the release date), the
+same packager the other ports use. It refuses any member byte-identical to the cartridge
+or the local `rof.xex`. The check decompresses every member with Lhasa, which only
+extracts and so is independent of the LHa for UNIX that wrote it, and compares it with
+its source. No cartridge or Kickstart ROM is packaged.
+
+The Install script finds the executable itself: it uses the `RoF` beside it (the full
+archive) or asks for it (the whdload.de archive, or a `RoF` of the wrong version), and
+accepts only the version in its `#exe-version`/`#exe-revision`, read with Installer's
+`getversion`. ⚠ Not `C:Version`: the 2.04 one cannot parse a version after a name with
+spaces (`Rescue on Fractalus! 1.3`) and returns WARN for every comparison, measured
+2026-11-02 against Installer's `getversion`, which read 1.2, 1.3, 1.4 and an unversioned
+file correctly. `tools/test_release_installer.py` covers the four paths (beside, asked
+with three wrong files first, stale `RoF` beside, cancelled).
+
+**Version bump:** `VERSION`, `src/platform/amiga/version.s`, both strings in
+`whdload/RoFSlave.s`, a new top entry in the ReadMe history (user-visible changes only),
+and `#exe-version`/`#exe-revision` in the Install script. The release check fails until
+they agree.
+
+**Publishing:** commit, tag the commit with the version (`git tag 1.3 && git push origin
+1.3`), then `make github-release`. It re-checks the archives, requires `HEAD` to be the
+tagged commit, and runs `gh release create` with `dist/RoF-<version>.lha` and the
+`amiga/out/RoF` executable as assets, the notes taken from the ReadMe's newest history
+entry. `dist/RoF-<version>-whdload.lha` is uploaded to whdload.de by hand.
 
 The compressor defaults to the shared `~/.local/share/amiga/lha-compressor/src/lha`
-(`$LHA` from `amiga/env.sh`); override it with `make dist LHA=/path/to/lha`. Homebrew's
-`lha` from **lhasa** only extracts and cannot create this archive. The compressor is
+(`$LHA` from `amiga/env.sh`). Homebrew's `lha` from **lhasa** only extracts and cannot
+create the archives. The compressor is
 [LHa for UNIX](https://github.com/jca02266/lha) at revision
 `16619b066b189ef289bb8b07b37d1c38d550da99`, which AmigaXDev's `make setup` builds.
 
@@ -322,11 +355,12 @@ For individual steps:
 make -C whdload                     # whdload/RoF.slave
 make -C whdload enhanced            # same filename, enhanced artwork + Custom4
 make -C whdload tune                # whdload/RoFTune.slave (DEBUG + MEMFREE)
-whdload/create_release.sh           # package existing game; rebuild default slave
+python3 tools/package_release.py amiga/out/RoF whdload/RoF.slave dist   # package only
+python3 tools/check_release.py      # re-check dist/ against the current sources
 ```
 
 Every slave invocation reassembles, so switching variants or changing SDK includes
-cannot reuse stale output. Packaging explicitly clears `VASMFLAGS` to select the
+cannot reuse stale output. `make release` explicitly clears `VASMFLAGS` to select the
 release configuration. Override `VASM`, `WHDLOAD` and `NDK` for tool installations
 other than `~/.local/vasmm68k_mot`, `~/.local/share/amiga/WHDLoad` and
 `~/.local/opt/m68k-amiga-elf/sys-include`.
@@ -428,7 +462,7 @@ something that round-trips latin-1, or the accented bytes get mangled.
   empty string, so `HDINIT` mounts the slave's own drawer and `LoadSeg("RoF")` wants the executable
   *beside* the slave — while `Install` still sets `#sub-dir "data"` and copies `RoF` into
   `<dest>/data`. An installed copy would fail with `_program_err`. Fix one side (`#sub-dir ""`, plus
-  the `create_release.sh` comment and §1 above, which still say `data` — or restore `"data"`), and
+  §1 above, which still say `data` — or restore `"data"`), and
   establish first *why* it was changed: if WHDLoad objected to the subdrawer, that settles it.
 * **The icon is the template's placeholder** (`RoF.inf`, a plain 36×22 icon). A real one,
   and optional NewIcon / OS3.5 colour variants, would be dropped in as

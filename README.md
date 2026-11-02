@@ -145,6 +145,8 @@ Developer documentation lives in [`AGENTS.md`](AGENTS.md) and [`docs/`](docs/).
 
 ### Host-built WHDLoad release
 
-`make dist` clean-builds the Amiga game and vasm slave, then packages
-`whdload/dist/RescueOnFractalus.lha` with LH5 compression. See [the slave build and emulator test](docs/whdload-slave.md#3-building-it)
-for tool paths, enhanced/tuning variants and local-ROM test instructions.
+`make release` clean-builds the Amiga game and vasm slave, then writes `dist/RoF-<version>.lha`
+(the full install, published on GitHub with the `RoF` executable) and
+`dist/RoF-<version>-whdload.lha` (for whdload.de, without the executable and the Manual; its
+installer asks for the executable). See [the slave build and emulator test](docs/whdload-slave.md#3-building-it)
+for tool paths, publishing, enhanced/tuning variants and local-ROM test instructions.

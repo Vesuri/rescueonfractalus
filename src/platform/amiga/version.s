@@ -17,10 +17,13 @@
 | Re-verify after ANY change to LDFLAGS, elf2hunk flags or this file:
 |     strings out/RoF | grep '\$VER:'      # must print the line below
 |
-| ⚠ The version number lives in THREE places — keep them in step:
+| ⚠ The version lives in five places — keep them in step (tools/check_release.py
+| fails the release when they disagree):
+|     VERSION                                the release number (archive names, git tag)
 |     src/platform/amiga/version.s           this file (the executable)
 |     whdload/RoFSlave.s                     slv_info + the slave's own $VER:
 |     whdload/RoF Install/ReadMe             the History section
+|     whdload/RoF Install/Install            #exe-version/#exe-revision, the version it accepts
 |
 | The date is deliberately HARDCODED rather than stamped at build time (the usual
 | `incbin "T:date"` idiom).  A build-time date would make every rebuild of an unchanged
