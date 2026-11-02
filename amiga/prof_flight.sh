@@ -37,8 +37,8 @@ BUILD=0
 if [ "${1:-}" = "--build" ]; then BUILD=1; shift; fi
 WARMUP="${1:-55}"; INTERVAL="${2:-0.4}"; COUNT="${3:-300}"
 
-if ! command -v fs-uae >/dev/null 2>&1 || ! command -v m68k-amiga-elf-gdb >/dev/null 2>&1; then
-  echo "fs-uae / m68k-amiga-elf-gdb not on PATH — run '. ./env.sh' in this shell first." >&2
+if ! command -v "${FSUAE:-fs-uae}" >/dev/null 2>&1 || ! command -v m68k-amiga-elf-gdb >/dev/null 2>&1; then
+  echo "FS-UAE / m68k-amiga-elf-gdb not found — run '. ./env.sh' in this shell first." >&2
   exit 1
 fi
 

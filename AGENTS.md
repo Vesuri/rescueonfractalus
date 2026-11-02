@@ -96,7 +96,7 @@ the snapshot". Rationale + the caveat in full: the `hostproof` block in `Makefil
 
 ### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
 ```
-. env.sh        # the shared AmigaXDev environment: toolchain on PATH, Kickstarts, WHDLoad 19.2 (SAME command)
+. env.sh        # the shared AmigaXDev environment: toolchain, FS-UAE ($FSUAE), Kickstarts, WHDLoad (SAME command)
 make            # build out/RoF — BSS, loads data/rof.rom at startup
 make standalone ROM=../rof.rom   # runnable out/RoF with the game data embedded (Workbench/Shell/emu)
 ./run.sh        # boot in FS-UAE (Kickstart 3.1; left mouse button quits)

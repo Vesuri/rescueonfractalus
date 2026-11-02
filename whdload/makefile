@@ -1,5 +1,5 @@
 # Host cross-build; the original BASM rules are in Makefile.amiga.
-# Defaults as amiga/env.sh (the shared AmigaXDev environment, with WHDLoad 19.2).
+# Defaults as amiga/env.sh (the shared AmigaXDev environment and its WHDLoad).
 WHDLOAD ?= $(HOME)/.local/share/amiga/WHDLoad
 NDK ?= $(HOME)/.local/opt/m68k-amiga-elf/sys-include
 VASM ?= $(HOME)/.local/vasmm68k_mot

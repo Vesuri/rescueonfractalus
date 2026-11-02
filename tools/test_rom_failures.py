@@ -11,6 +11,8 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+# amiga/env.sh sets $FSUAE to the native build; fall back to the one on PATH.
+FSUAE = os.environ.get('FSUAE') or os.environ.get('FSUAE_ARM') or 'fs-uae'
 
 
 def main():
@@ -48,7 +50,7 @@ def main():
     (boot / 's/startup-sequence').write_text('\n'.join(commands) + '\n')
     with (base / 'emulator.log').open('w') as log:
         emu = subprocess.Popen([
-            'fs-uae', '--amiga_model=A500+', '--chip_memory=1024',
+            FSUAE, '--amiga_model=A500+', '--chip_memory=1024',
             '--fast_memory=8192', '--kickstart_file=' + os.environ['KICKSTART'],
             '--hard_drive_0_priority=10', '--hard_drive_0=' + str(boot),
             '--hard_drive_1=' + str(game), '--floppy_drive_0=' + str(args.workbench),

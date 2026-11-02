@@ -9,6 +9,13 @@ theorize:** this loop diagnosed timing and render bugs where static reasoning ke
 
 ## The harness
 
+- **Which FS-UAE:** `amiga/env.sh` sets `$FSUAE` to AmigaXDev's native arm64 build, and every
+  run/debug/diag/probe script takes it from there through `$FSUAE_COMMON`. It is several times
+  faster on long diagnostics and 68030 runs, and it carries the cached-MMU write-attribute
+  correction the x86_64 `fs-uae` on `PATH` lacks (without it a cached 68040 can read stale DMA
+  pixels). Nothing in this tree needs the x86_64 build — only host `lldb` attach does.
+  ⚠ Memory timing is not identical between the two binaries: never compare a measurement taken
+  on one against the other, and re-measure any baseline in the same session as its A/B.
 - **`amiga/diag_run.sh [delay]`** boots `out/RoF` under the gdb stub, runs `[delay]` seconds,
   SIGINTs gdb, runs the print commands in **`amiga/diag_timing.gdb`** and writes everything to
   `amiga/.run/gdb-out.log` (it also echoes a filtered tail). Edit `diag_timing.gdb` to print the
